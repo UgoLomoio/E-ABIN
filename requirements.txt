@@ -1,0 +1,26 @@
+--extra-index-url https://download.pytorch.org/whl/cu121
+numpy==1.23.5
+torch==2.4.0+cu121
+torchvision
+torchaudio
+pygod 
+pyg_lib
+torch_scatter
+torch_sparse
+torch_cluster 
+torch_spline_conv
+torch_geometric
+shap
+plotly 
+dash 
+dash_bootstrap_components
+pandas 
+matplotlib
+scipy
+seaborn
+scikit-learn
+GEOparse
+statsmodels
+screeninfo
+dash-shap-components
+explainerdashboard
