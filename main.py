@@ -1527,6 +1527,7 @@ def update_log_display(n_intervals):
     Input("embeddings-button", "n_clicks"),
 )
 def update_embeddings_onclick(embeddings_nclicks):
+    global expr
     # Debugging print statements
     print(f"Button clicks Embeddings: {embeddings_nclicks}")
 
@@ -1538,7 +1539,15 @@ def update_embeddings_onclick(embeddings_nclicks):
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     if button_id == 'embeddings-button':
-        div = update_embeddings(True)
+        if expr is not None:
+            div = update_embeddings(True)
+        else:
+            div = html.Div([
+                html.Br(),
+                html.Br(),
+                html.P("Upload a gene expression file first.",
+                style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'})
+            ])
         return div 
 
     return dash.no_update
@@ -1590,10 +1599,18 @@ def update_analyze_onclick(analyze_nclicks, method):
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     if button_id == 'analyze-button':
-        
-        div = update_analysis_output()
-        return div
-
+        if expr is not None:
+            div = update_analysis_output()
+            return div
+        else:
+            div = html.Div([
+                html.Br(),
+                html.Br(),
+                html.Br(),
+                html.P("Upload a gene expression file first.",
+                style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'})
+            ])
+            return div 
     return dash.no_update
 
 # Callback to update page content based on analyze button clicks
@@ -1619,12 +1636,24 @@ def update_explain_onclick(explain_nclicks, model_name_in):
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     if button_id == 'explain-button':
-        if model_name in analysis_options['ML']:
-            div = update_explainability_ml(model_name)
+        if expr is not None:
+            if model_name in analysis_options['ML']:
+                div = update_explainability_ml(model_name)
+            else:
+                div = update_explainability_dl(model_name)
+            return div
         else:
-            div = update_explainability_dl(model_name)
-        return div
-        
+            div = html.Div([
+                html.Br(),
+                html.Br(),
+                html.Br(),
+                html.Br(),
+                html.Br(),
+                html.Br(),
+                html.P("Upload a gene expression file first.",
+                style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'})
+            ])
+        return div 
     return dash.no_update
 
 default_stylesheet = [

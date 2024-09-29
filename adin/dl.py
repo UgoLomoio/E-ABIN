@@ -15,7 +15,12 @@ scores = {"ROC AUC": eval_roc_auc, "F1": eval_f1, "Average Precision": eval_aver
 epoch = 100
 verbose = 1
 dropout = 0.2
-device = "cuda:0" if torch.cuda.is_available() else "cpu"
+if torch.cuda.is_available():
+    device = "cuda"
+elif torch.backends.mps.is_available():
+    device = "mps"
+else:
+    device = "cpu"
 gpu = -1 if device == "cpu" else 0 #-1 cpu
 num_layers = 7
 learning_rate = 0.005

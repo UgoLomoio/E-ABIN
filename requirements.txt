@@ -1,14 +1,8 @@
+--extra-index-url https://data.pyg.org/whl/torch-2.4.0+cpu.html
 numpy==1.23.5
 torch==2.4.0
 torchvision
 torchaudio
-pygod 
-pyg_lib
-torch_scatter
-torch_sparse
-torch_cluster 
-torch_spline_conv
-torch_geometric
 shap
 plotly 
 dash 
@@ -23,3 +17,4 @@ statsmodels
 screeninfo
 dash-shap-components
 dash-cytoscape
+ninja
