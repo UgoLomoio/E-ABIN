@@ -36,6 +36,7 @@ def get_platforms(geo_accession):
     return gse, platforms
 
 def get_annotation_df(gse, values_df, platforms):
+    
     found_platform = None
     annotation_df = None
 
@@ -111,27 +112,24 @@ def get_targets(dataframe):
     map_ys = {}
     ys = []
     patients = []
+    
+    for index, row in enumerate(dataframe.iterrows()):
 
-    for index, row in dataframe.iterrows():
-
-        patient = row[0]
-      
-        labels = np.unique(list(dataframe.index))
-        labels = [label.lower() for label in labels]
-        if "healthy" in labels:
-            healthy_label = "healthy"
-        elif "control" in labels:
-            healthy_label = "control"
-        elif "normal" in labels:
-            healthy_label = "normal"
-        else:
-            raise Exception("Can't find a valid label target for healthy subjects. Please change the value of healthy subject in the 'Target' column using one of the following: 'Healthy', 'Control', 'Normal'")
-        y = 0 if healthy_label in index.lower() else 1
-        patients.append(patient)
+        patient = row[1]["ID_REF"]
+        label = row[0]
+        if "healthy" in label.lower():
+            y = "control"
+        elif "control" in label.lower():
+            y = "control"
+        elif "normal" in label.lower():
+            y = "control"
+        else: 
+            y = "cancer"
         ys.append(y)
+        patients.append(patient)
         map_ys[patient] = y
-      
-
+        
+    ys = [0 if y == "control" else 1 for y in ys]
     clinic = pd.DataFrame(data = np.array(ys), index = patients, columns = ["Target"])
     clinic.index.name = "sample"
     return clinic
@@ -159,31 +157,6 @@ def read_human_metilation(filepath):
 def read_gene_expression(filepath):
     df = pd.read_csv(filepath, index_col = 0, skiprows=28, sep = "\t").T
     return df 
-
-def rename_columns(values_df, meth_df):
-
-    values_columns = values_df.columns.to_list()
-    rename = {}
-    for i, column in enumerate(values_columns):
-      
-      if i+1 in np.arange(1, len(values_columns), 1000):
-          print("\r", i+1, "/", len(values_columns), end = "")
-          
-      result = meth_df[meth_df['Name'] == column]
-      if not result.empty:
-          gene_name = result['Symbol'].values[0]
-          if pd.isna(gene_name):
-            del values_df[column]
-            #print("The gene associated with", column, "is unknown")
-          else:
-            rename[column] = gene_name
-            #print(f'The gene associated with {column} is {gene_name}')
-      else:
-          pass
-          #print(f'{column} not found in the annotation file.')
-
-    values_df.rename(columns = rename, inplace = True)
-    return values_df
 
 def dense_isn(
     data,

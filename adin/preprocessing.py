@@ -9,18 +9,54 @@ def count_unnamed(data):
       count+=1
   return count
     
-def replace_nan_with_mode(dataframe, target_name="Target"):
+
+def replace_nan_with_mode_and_rename(dataframe, ann_df, target_name="Target", need_replace = True):
+    
+    dataframe = dataframe.apply(pd.to_numeric, errors='coerce')
     mode_df = dataframe.groupby(target_name).agg(lambda x: pd.Series.mode(x).iloc[0] if not x.mode().empty else np.nan).reset_index()
     columns = dataframe.columns[:-1]
+    rename = {}
+    
     # Replace NaN values in each value column with the corresponding mode
     for j, col in enumerate(columns):
         if j+1 in np.arange(1, len(columns), 1000):
             print("\r", j+1, "/", len(columns), end = "")
-        dataframe[col] = dataframe[col].fillna(mode_df[col])
+        
+        deleted_col = False
 
-    # Drop the mode columns as they are no longer needed
-    #dataframe = dataframe.drop(columns=[f'{col}_mode' for col in columns])
-    dataframe = dataframe.drop(columns=["Target"])
+        result = ann_df[ann_df['Name'] == col]
+        if not result.empty:
+            gene_name = result['Symbol'].values[0]
+            if pd.isna(gene_name):
+                deleted_col = True
+                del dataframe[col]
+                #print("The gene associated with", col, "is unknown")
+            else:
+                rename[col] = gene_name
+                #print(f'The gene associated with {col} is {gene_name}')
+        else:
+            gene_name = col 
+ 
+        if not deleted_col:
+            if need_replace:
+                if dataframe[col].isna().any().sum() > 0:
+                    for target_class in mode_df[target_name]:
+                        mode_value = mode_df.loc[mode_df[target_name] == target_class, col].values[0]
+
+                        if pd.notna(mode_value):
+                            print(f"Filling NA column {gene_name} (class {target_class}): {dataframe[dataframe[target_name] == target_class][col].isna().sum()} NaNs to be filled with {mode_value}")
+                        
+                            # Fill NaN values for the specific target class
+                            dataframe.loc[dataframe[target_name] == target_class, col] = dataframe.loc[dataframe[target_name] == target_class, col].fillna(mode_value)
+
+                            if dataframe[dataframe[target_name] == target_class][col].isna().any():  # Check if NaNs still exist
+                                print(f"Column {col} still has NaN values after filling for class {target_class}.")
+
+            #print(f'{col} not found in the annotation file.')
+    
+    dataframe.rename(columns = rename, inplace = True)
+    dataframe.drop(columns=["Target"], inplace = True)
+   
     return dataframe
 
 def single_dataframe(data, group):
@@ -38,13 +74,14 @@ def check_if_preprocessing_is_needed(dataframe):
     return needed
 
 
-def preprocess(dataframe):
+def preprocess(dataframe, ann_df, need_rename = True):
    
     needed = check_if_preprocessing_is_needed(dataframe)
     if needed:
         if dataframe.isnull().any().any():
             print("Found None gene expression values, replacing them with a target-based mode approach.")
-            dataframe = replace_nan_with_mode(dataframe)
+            need_replace = True
+        dataframe = replace_nan_with_mode_and_rename(dataframe, ann_df, need_replace = need_replace)
         unnamed = count_unnamed(dataframe)
         if unnamed > 0:
             raise Exception("Input gene expression data might be corrupted. Found {} unnamed genes.".format(unnamed))

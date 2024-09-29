@@ -8,8 +8,6 @@
 ***************************************************************************************************************************************************************
 """
 
-from pickle import FALSE
-from tkinter import Button
 import numpy as np
 import pandas as pd 
 import webbrowser
@@ -20,9 +18,10 @@ import pandas as pd
 from dash.dash_table import DataTable
 import io 
 import base64
-
+#import multiprocessing
 
 from sklearn.metrics import confusion_matrix
+from torch.cuda import is_available
 from torch.utils.data import dataloader
 from adin import utils, ml, dl, preprocessing
 import plotly.graph_objects as go
@@ -34,7 +33,12 @@ import dash_cytoscape as cyto
 from dash import Dash, html, Input, Output, State, callback, dcc
 import json 
 from torch_geometric.explain import Explainer, GNNExplainer
+#from parallel_pandas import ParallelPandas
 
+# Dynamically determine the number of CPU cores
+#n_cpu = multiprocessing.cpu_count()
+#initialize parallel-pandas
+#ParallelPandas.initialize(n_cpu=n_cpu, split_factor=4, disable_pr_bar=True)
 
 torch.cuda.empty_cache()
 
@@ -392,14 +396,10 @@ def upload_preprocessed_file(gene_file):
         targets_uq = np.unique(targets['Target'].values)
         if len(targets_uq) > 2:
             raise Exception("Target column must have only 2 unique values to perform Anomaly Detection and Binary Classification. Found {} unique targets.".format(len(targets_uq)))
-        
+
         df = expr.join(targets)
-        
-        print("Preprocessing")
-        add_log_message("Preprocessing")
-        expr = preprocessing.preprocess(df) 
-        
-        progress = 75
+
+        progress = 90
         if "Target" in expr.columns:
             expr = expr.drop("Target", axis=1)
         
@@ -467,23 +467,27 @@ def upload_file(gene_file):
         add_log_message("Reading gene expression file")
         expr = utils.get_expressions(gene_data)
         patients = list(expr.index)
-        progress = 50
+        #print("Patients:", patients)
+        progress = 35
 
-        print("Renaming columns with gene expression names")
-        add_log_message("Renaming columns with gene expression names")
         print("Downloading annotation file")  
+        
         found_platform, annotation_df = utils.get_annotation_df(gse, expr, platforms)
         if found_platform is None:
             raise Exception ("Cannot detect any valid platforms from file. File must be corrupted.")
-        expr = utils.rename_columns(expr, annotation_df)
         targets = utils.get_targets(gene_data)
+        progress = 50 
+        
+        #print("Expr:", expr)
+        print("Targets:", targets)
         df = expr.join(targets)
-        progress = 65 
-
+    
         print("Preprocessing")
-        add_log_message("Preprocessing")
-        expr = preprocessing.preprocess(df) 
+        add_log_message("Renaming columns & Replacing none values.")
+        expr = preprocessing.preprocess(df, annotation_df, need_rename=True) 
         progress = 90
+        #print("Preprocessed:", expr)
+        
 
         if "Target" in expr.columns:
             expr = expr.drop("Target", axis=1)
@@ -491,6 +495,7 @@ def upload_file(gene_file):
         targets_uq = np.unique(targets['Target'].values)
         if len(targets_uq) > 2:
             raise Exception("Target column must have only 2 unique values to perform Anomaly Detection and Binary Classification. Found {} unique targets.".format(len(targets_uq)))
+       
         
         limited_expr = expr.iloc[:10, :50]
         limited_expr = limited_expr.join(targets)
@@ -1257,7 +1262,7 @@ def update_upload_onclick(upload_nclicks, gene_file, preprocessed):
         ])
         return div, {'display': 'none'}, True, download_button_style
     
-    # Default return if no specific button click (could be useful if other conditions were added)ù
+    # Default return if no specific button click (could be useful if other conditions were added)
     return None, {'display': 'block'}, dash.no_update, download_button_style # Show log display if no button click
 
 # Callback to update page content based on upload file button clicks
@@ -1805,10 +1810,10 @@ def update_forceplot(patient_idx):
     patient = patients[patient_idx]
     ys = targets.values
     X = np.concatenate((X_train, X_test), axis=0)
-    y = ys[patient_idx]
+    y = ys[patient_idx][0]
     plot_title = "Shap Force plot for model {} and patient {} with class {}".format(model_name, patient, map_final[y])
     
-    return ml.get_plot("force-plot", {}, model, model_name, X, y, genes, index = patient_idx, top_n = 10, X_train = X_train, class_id = y, title=plot_title)
+    return ml.get_plot("force-plot", {}, model, model_name, X, ys, genes, index = patient_idx, top_n = 10, X_train = X_train, class_id = y, title=plot_title)
 
 if __name__ == '__main__':
         
