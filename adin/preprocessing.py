@@ -1,3 +1,9 @@
+import platform
+
+if platform.system() == "linux":
+    import cudf.pandas
+    cudf.pandas.install()
+
 import pandas as pd
 import numpy as np
 
@@ -26,7 +32,10 @@ def replace_nan_with_mode_and_rename(dataframe, ann_df, target_name="Target", ne
 
         result = ann_df[ann_df['Name'] == col]
         if not result.empty:
-            gene_name = result['Symbol'].values[0]
+            if 'Symbol' in result.keys():
+                gene_name = result['Symbol'].values[0]
+            elif 'Gene Symbol' in result.keys():
+                gene_name = result['Gene Symbol'].values[0]
             if pd.isna(gene_name):
                 deleted_col = True
                 del dataframe[col]
@@ -73,11 +82,46 @@ def check_if_preprocessing_is_needed(dataframe):
        needed = True
     return needed
 
+def rename(dataframe, ann_df):
+    
+    columns = dataframe.columns[:-1]
+    rename = {}
+    
+    # Replace NaN values in each value column with the corresponding mode
+    for j, col in enumerate(columns):
+        if j+1 in np.arange(1, len(columns), 1000):
+            print("\r", j+1, "/", len(columns), end = "")
+        
+        deleted_col = False
+        result = ann_df[ann_df['ID'] == col]#Name
+        if not result.empty:
+            if 'Symbol' in result.keys():
+                gene_name = result['Symbol'].values[0]
+            elif 'Gene Symbol' in result.keys():
+                gene_name = result['Gene Symbol'].values[0]
+            if pd.isna(gene_name):
+                deleted_col = True
+                del dataframe[col]
+                #print("The gene associated with", col, "is unknown")
+            else:
+                rename[col] = gene_name
+                #print(f'The gene associated with {col} is {gene_name}')
+        else:
+            gene_name = col 
+ 
+
+    dataframe.rename(columns = rename, inplace = True)
+    dataframe.drop(columns=["Target"], inplace = True)
+   
+    return dataframe
+
+
 
 def preprocess(dataframe, ann_df, need_rename = True):
    
     needed = check_if_preprocessing_is_needed(dataframe)
     if needed:
+        print("Handle null values and renaming")
         if dataframe.isnull().any().any():
             print("Found None gene expression values, replacing them with a target-based mode approach.")
             need_replace = True
@@ -85,5 +129,11 @@ def preprocess(dataframe, ann_df, need_rename = True):
         unnamed = count_unnamed(dataframe)
         if unnamed > 0:
             raise Exception("Input gene expression data might be corrupted. Found {} unnamed genes.".format(unnamed))
-        
+    else:
+        print("Renaming")
+        if need_rename:
+            dataframe = rename(dataframe, ann_df)
+            unnamed = count_unnamed(dataframe)
+            if unnamed > 0:
+                raise Exception("Input gene expression data might be corrupted. Found {} unnamed genes.".format(unnamed))
     return dataframe

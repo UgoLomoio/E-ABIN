@@ -1,3 +1,9 @@
+import platform
+
+if platform.system() == "linux":
+    import cudf.pandas
+    cudf.pandas.install()
+
 import pandas as pd
 import numpy as np
 #from matplotlib import pyplot
@@ -97,13 +103,15 @@ def train_test_split(data, test_size = 0.7, target_name = 'Target'):
     return X_train, X_test, y_train, y_test
 
 
-def baselineComparison(X, y, scoring='accuracy', class_weight=True):
+def baselineComparison(X, y, params, scoring='accuracy', class_weight=True):
     '''Input:
     X: array-like (features)
     y: array-like (target values)
+    model_params: Model Config object containing params for cross validation and single models
     scoring: metric for cross-validation (default: 'accuracy')
     class_weight: boolean, True for classification problems (default True)
     '''
+   
     # Define the models
     models = []
 
@@ -114,11 +122,11 @@ def baselineComparison(X, y, scoring='accuracy', class_weight=True):
         models.append(('LDA', LinearDiscriminantAnalysis()))
         models.append(('NB', GaussianNB()))
 
-    models.append(('LR', LogisticRegression(solver='newton-cg', max_iter=100, class_weight=cw)))
-    models.append(('KNN', KNeighborsClassifier(2, weights='distance')))
-    models.append(('DT', DecisionTreeClassifier(class_weight=cw)))
-    models.append(('SVM', SVC(kernel = 'rbf', gamma='scale', class_weight=cw, probability=True)))
-    models.append(('RF', RandomForestClassifier(max_depth=5, n_estimators=20, class_weight=cw)))
+    models.append(('LR', LogisticRegression(solver=params.lr['solver'], max_iter=params.lr["max_iter"], class_weight=cw)))
+    models.append(('KNN', KNeighborsClassifier(params.knn["k"], metric=params.knn["metric"])))
+    models.append(('DT', DecisionTreeClassifier(max_depth = params.dt["max_depth"], min_samples_split = params.dt["min_samples_split"], class_weight=cw)))
+    models.append(('SVM', SVC(kernel = params.svm["kernel"], C = params.svm["C"], gamma='scale', class_weight=cw, probability=True)))
+    models.append(('RF', RandomForestClassifier(max_depth=params.rf["max_depth"], n_estimators=params.rf["n_estimators"], class_weight=cw)))
 
     results = []
     namesModels = []
@@ -130,6 +138,7 @@ def baselineComparison(X, y, scoring='accuracy', class_weight=True):
     fig_roc = go.Figure()
     mean_fpr = np.linspace(0, 1, 100)
 
+    """
     counts, uqs = np.unique(y, return_counts=True)
     
     if min(counts) > 20:
@@ -138,6 +147,19 @@ def baselineComparison(X, y, scoring='accuracy', class_weight=True):
         n_splits = 5
     else:
         n_splits = 2
+    """
+    n_splits = params.cross_val_k
+
+    #check if the number of data and balancing of the dataset is sufficient to enable cross validation using this number of splits 
+
+    uqs, counts = np.unique(y, return_counts=True)
+    uq_count = {uq: count for uq, count in zip(uqs, counts)}
+
+    if min(uq_count) < n_splits:
+        n_splits = 2
+    else:
+        if uq_count[0] >= 2*uq_count[1] or uq_count[1] >= 2*uq_count[0]:
+            n_splits = 2
 
     print("Cross-validation splits: ", n_splits)
     # Cross-validation for each model
@@ -607,16 +629,19 @@ def create_results_df(models, X_test, y_test):
     
     for i, (model_name, model) in enumerate(models.items()):
 
-        print(model_name)
-        y_pred = model.predict(X_test)
-        _, metrics, msg = validate_model(y_test, y_pred)
-        acc = float(round(metrics['accuracy']*100, 2))
-        f1 = float(round(metrics['f1'], 2))
-        sensitivity = float(round(metrics['sensitivity']*100, 2))
-        specificity = float(round(metrics['specificity']*100, 2))
-        auc = float(round(metrics['auc_score'], 4))
-        precision = float(round(metrics['precision']*100, 2))
-        df.loc[i] = [model_name, acc, f1, sensitivity, specificity, auc, precision]
+        if model_name not in ["LR", "SVM", "KNN", "RF", "DT"]:
+            continue
+        else:
+            print(model_name)
+            y_pred = model.predict(X_test)
+            _, metrics, msg = validate_model(y_test, y_pred, model_name)
+            acc = float(round(metrics['accuracy']*100, 2))
+            f1 = float(round(metrics['f1'], 2))
+            sensitivity = float(round(metrics['sensitivity']*100, 2))
+            specificity = float(round(metrics['specificity']*100, 2))
+            auc = float(round(metrics['auc_score'], 4))
+            precision = float(round(metrics['precision']*100, 2))
+            df.loc[i] = [model_name, acc, f1, sensitivity, specificity, auc, precision]
 
     df = df.sort_values(by = "AUC score", ascending = False)
     return df

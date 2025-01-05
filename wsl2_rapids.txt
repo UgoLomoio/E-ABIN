@@ -1,0 +1,11 @@
+WSL2 RAPIDS 
+
+sudo apt update
+sudo apt install build-essential
+
+conda create -n adin -c rapidsai -c conda-forge -c nvidia  \
+    rapids=24.10 python=3.10 'cuda-version>=12.1'
+
+pip install -r requirementscuda.txt
+
+pip install -r requirementstorchcuda.txt

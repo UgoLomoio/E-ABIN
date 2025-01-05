@@ -4,8 +4,6 @@
 # License: BSD 2 clause
 # Modified by Lomoio Ugo to enable Explainability
 
-
-
 import math
 import torch
 import torch.nn.functional as F
@@ -16,13 +14,10 @@ import torch
 import warnings
 import torch.nn.functional as F
 from torch_geometric.nn import MLP
-from torch_geometric.utils import to_dense_adj
 import time
 from inspect import signature
-from abc import ABC, abstractmethod
 from torch_geometric.data import Data
-
-import torch
+from pygod.metric import eval_roc_auc, eval_f1, eval_average_precision, eval_recall_at_k, eval_precision_at_k
 import numpy as np
 from scipy.stats import binom
 from scipy.special import erf
@@ -230,6 +225,12 @@ class GAAN_Explainable(torch.nn.Module):
     compile_model : bool, optional
         Whether to compile the model with ``torch_geometric.compile``.
         Default: ``False``.
+
+    isn: bool, optional
+        Whether take in input multiple Individual Specialized Networks (ISNs) rather than one convergence/divergence network.
+        Using ISNs we aim to identify anomalous graphs (graph anomaly detection), while using convergence/divergence network is used to identify anomalous nodes in the graph (node anomaly detection). 
+        Default: ``False``.
+        
     **kwargs
         Other parameters for the backbone.
 
@@ -275,6 +276,7 @@ class GAAN_Explainable(torch.nn.Module):
                  verbose=0,
                  save_emb=False,
                  compile_model=False,
+                 isn = False,
                  **kwargs):
 
 
@@ -285,6 +287,12 @@ class GAAN_Explainable(torch.nn.Module):
         # In GAAN_Explainable, self.model_layers is for model layers
         self.model_layers = num_layers
 
+        self.isn = isn 
+        if self.isn:
+            print("Graph Anomaly Detection task: expecting multiple ISNs")
+        else:
+            print("Node Anomaly Detection task: expecting only one convergence/divergence graph")
+            
         if backbone is not None:
             warnings.warn('GAAN_Explainable can only use MLP as the backbone.')
 
@@ -461,16 +469,28 @@ class GAAN_Explainable(torch.nn.Module):
     def __call__(self, *args, **kwargs):
         """Make the class instance callable."""
 
-        #print("CALL")
+        # Get input data
         x = args[0]
         edge_index = args[1]
+        print(x.shape, edge_index.shape)
+        if self.isn:
+            if len(args) >= 3:
+                batch = args[2]  # if batch is present, handle it
 
-        data = Data(x=x, edge_index = edge_index)
+        # Ensure that x requires gradients
+        x.requires_grad_()  # Set requires_grad=True for node features
+
+        # Create the data object
+        data = Data(x=x, edge_index=edge_index)
+
+        # Ensure the model is in evaluation mode
         self.eval()
-        pred, probs = self.predict(data, return_prob=True)
-        #print("ENDCALL ", probs)
-        return probs
 
+        # Forward pass to compute predictions with gradients
+        pred, probs = self.predict(data, return_prob=True)
+        probs = probs.float().view(-1, 1)   # Ensure the target is in the right shape [N, 1]
+        probs.requires_grad = True
+        return probs
 
     def fit(self, data, label=None):
 

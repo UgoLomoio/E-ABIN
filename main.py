@@ -8,7 +8,15 @@
 ***************************************************************************************************************************************************************
 """
 
+import networkx as nx   
 import numpy as np
+import os  
+
+import platform
+if platform.system() == "linux":
+    import cudf.pandas
+    cudf.pandas.install()
+
 import pandas as pd 
 import webbrowser
 import dash
@@ -18,21 +26,26 @@ import pandas as pd
 from dash.dash_table import DataTable
 import io 
 import base64
+
 #import multiprocessing
 
+from plotly.graph_objs.layout import annotation
 from sklearn.metrics import confusion_matrix
 from torch.cuda import is_available
 from torch.utils.data import dataloader
-from adin import utils, ml, dl, preprocessing
+from adin import utils, ml, dl, preprocessing, gaan_config, ml_config, gcn, gaan, captum_explainations 
+from pygod.detector import GAE
 import plotly.graph_objects as go
 from dash import html, dcc
 import torch
 from collections import deque
 import dash_cytoscape as cyto
-import dash_cytoscape as cyto
 from dash import Dash, html, Input, Output, State, callback, dcc
 import json 
 from torch_geometric.explain import Explainer, GNNExplainer
+import traceback
+import joblib 
+
 #from parallel_pandas import ParallelPandas
 
 # Dynamically determine the number of CPU cores
@@ -40,8 +53,10 @@ from torch_geometric.explain import Explainer, GNNExplainer
 #initialize parallel-pandas
 #ParallelPandas.initialize(n_cpu=n_cpu, split_factor=4, disable_pr_bar=True)
 
-torch.cuda.empty_cache()
 
+print("Detected Operative System {}".format(platform.system()))
+
+torch.cuda.empty_cache()
 
 # Initialize the Dash app
 html_plot_path = "http://127.0.0.1:8050/"
@@ -51,6 +66,7 @@ app.title = "Anomaly Detection in Individualized Networks"
 # Global variables to hold the data
 log_messages = deque(maxlen=1)  
 gene_data = None
+edge_index = None
 expr = None 
 targets = None
 patients = None
@@ -78,13 +94,19 @@ nodes = []
 edges = []
 explainer = None 
 node_mapping = None 
-map_edgeattr = None
 map_final = {0: "Normal", 1: "Anomalous"}
+gaan_params = None 
+ml_params = None 
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+isns = None 
+explainers = {}
 
 
 analysis_options = {
     'ML': ['KNN', 'LR', 'DT', 'SVM', 'RF'], #['LDA', 'NB', 'KNN', 'LR', 'DT', 'SVM', 'RF']
-    'GAAN': ['GAAN']
+    'GAAN (node)': ['GAAN_node', 'GCN', 'GAE'],
+    'GAAN (ISNs)': ['GAAN_isn']
 }
 
 reset_button = dbc.Button(
@@ -101,6 +123,200 @@ reset_button = dbc.Button(
     },
     n_clicks=0
 )
+
+gaan_params_layout = html.Div([
+
+    # Header
+    html.H2("GAAN Model Parameters"),
+
+    # Input for noise_dim (int)
+    html.Label("Noise Dimension (noise_dim):"),
+    dcc.Input(id='noise_dim', type='number', value=16, min=1, step=1),
+    html.Br(),
+
+    # Input for hid_dim (int)
+    html.Label("Hidden Dimension (hid_dim):"),
+    dcc.Input(id='hid_dim', type='number', value=64, min=1, step=1),
+    html.Br(),
+
+    # Input for num_layers (int)
+    html.Label("Number of Layers (num_layers):"),
+    dcc.Input(id='num_layers', type='number', value=4, min=1, step=1),
+    html.Br(),
+
+    # Input for dropout (float)
+    html.Label("Dropout Rate (dropout):"),
+    dcc.Input(id='dropout', type='number', value=0.1, min=0, max=1, step=0.01),
+    html.Br(),
+
+    # Input for contamination (float)
+    html.Label("Contamination (contamination):"),
+    dcc.Input(id='contamination', type='number', value=0.05, min=0.0, max=0.5, step=0.01),
+    html.Br(),
+
+    # Input for learning rate (lr)
+    html.Label("Learning Rate (lr):"),
+    dcc.Input(id='lr', type='number', value=0.004, step=0.0001),
+    html.Br(),
+
+    # Input for epoch (int)
+    html.Label("Number of Epochs (epoch):"),
+    dcc.Input(id='epoch', type='number', value=100, min=1, step=1),
+    html.Br(),
+
+    # Input for GPU index (gpu)
+    html.Label("GPU Index (gpu):"),
+    dcc.Input(id='gpu', type='number', value=-1, min=-1, step=1),
+    html.Br(),
+
+    # Input for batch_size (int)
+    html.Label("Batch Size (batch_size):"),
+    dcc.Input(id='batch_size', type='number', value=2, min=2, step=1),
+    html.Br(),
+
+    # Slider for verbosity (verbose)
+    html.Label("Verbosity Mode (verbose):"),
+    dcc.Slider(
+        id='verbose',
+        min=0,
+        max=3,
+        step=1,
+        value=1,
+        marks={i: str(i) for i in range(4)}
+    ),
+    html.Br(),
+])
+
+
+
+
+# Define collapsible layout for each algorithm's parameters
+def get_lr_params():
+    return dbc.Collapse(
+        dbc.CardBody([
+            html.H5("Linear Regression Parameters", className="card-title"),
+            html.Label("Solver:"),
+            dcc.Dropdown(
+                id="lr-solver",
+                options=[
+                    {"label": "lbfgs", "value": "lbfgs"},
+                    {"label": "liblinear", "value": "liblinear"},
+                    {"label": "newton-cg", "value": "newtow-cg"},
+                    {"label": "newton-cholesky", "value": "newton-cholesky"},
+                    {"label": "sag", "value": "sag"},
+                    {"label": "saga", "value": "saga"},
+                ],
+                value="lbfgs",
+            ),
+            html.Label("Penality:"),
+            dcc.Dropdown(
+                id="lr-penality",
+                options=[
+                    {"label": "None", "value": None},
+                    {"label": "l1", "value": "l1"},
+                    {"label": "l2", "value": "l2"},
+                    {"label": "elasticnet", "value": "elasticnet"},
+                ],
+                value="l2",
+            ),
+            html.Label("Max iter:"),
+            dcc.Input(type="number", id="lr-max-iter", value=100, step=1),
+        ]),
+        id="collapse-lr",
+        is_open=True,
+    )
+
+def get_svm_params():
+    return dbc.Collapse(
+        dbc.CardBody([
+            html.H5("SVM Parameters", className="card-title"),
+            html.Label("Kernel:"),
+            dcc.Dropdown(
+                id="svm-kernel",
+                options=[
+                    {"label": "Linear", "value": "linear"},
+                    {"label": "Polynomial", "value": "poly"},
+                    {"label": "RBF", "value": "rbf"},
+                    {"label": "Sigmoid", "value": "sigmoid"},
+                ],
+                value="linear",
+            ),
+            html.Label("C (Regularization Parameter):"),
+            dcc.Input(type="number", id="svm-c", value=1, step=0.1),
+        ]),
+        id="collapse-svm",
+        is_open=True,
+    )
+
+def get_knn_params():
+    return dbc.Collapse(
+        dbc.CardBody([
+            html.H5("K-Nearest Neighbors Parameters", className="card-title"),
+            html.Label("Number of Neighbors (K):"),
+            dcc.Input(type="number", id="knn-k", value=5, min=1, step=1),
+            html.Label("Metric:"),
+            dcc.Dropdown(
+                id="knn-metric",
+                options=[
+                    {"label": "Euclidean", "value": "euclidean"},
+                    {"label": "Manhattan", "value": "manhattan"},
+                    {"label": "Minkowski", "value": "minkowski"},
+                ],
+                value="euclidean",
+            ),
+        ]),
+        id="collapse-knn",
+        is_open=True,
+    )
+
+def get_rf_params():
+    return dbc.Collapse(
+        dbc.CardBody([
+            html.H5("Random Forest Parameters", className="card-title"),
+            html.Label("Number of Estimators:"),
+            dcc.Input(type="number", id="rf-n-estimators", value=100, min=1, step=1),
+            html.Label("Max Depth:"),
+            dcc.Input(type="number", id="rf-max-depth", value = -1, min=-1, step=1),
+        ]),
+        id="collapse-rf",
+        is_open=True,
+    )
+
+def get_dt_params():
+    return dbc.Collapse(
+        dbc.CardBody([
+            html.H5("Decision Tree Parameters", className="card-title"),
+            html.Label("Max Depth:"),
+            dcc.Input(type="number", id="dt-max-depth", value=-1, min=-1, step=1),
+            html.Label("Min Samples Split:"),
+            dcc.Input(type="number", id="dt-min-samples-split", value=2, min=2, step=1),
+        ]),
+        id="collapse-dt",
+        is_open=True,
+    )
+
+def get_split_params():
+    return dbc.Collapse(
+        dbc.CardBody([
+            html.H5("Train-Test split parameters", className="card-title"),
+            html.Label("Train Split:"),
+            dcc.Input(type="number", id="split-train", min=0.2, max=0.95, value = 0.7),
+            html.Label("Min Samples Split:"),
+            dcc.Input(type="number", id="cv-split", value=2, min=2, max = 5, step=1),
+        ]),
+        id="collapse-split",
+        is_open=True,
+    )
+
+# Assemble all parameter collapsibles in the modal body
+ml_params_layout = html.Div([
+    get_split_params(),
+    get_lr_params(),
+    get_svm_params(),
+    get_knn_params(),
+    get_rf_params(),
+    get_dt_params(),
+])
 
 navbar = dbc.NavbarSimple(
         children=[
@@ -149,39 +365,41 @@ footer = html.Footer([
                 #html.P("Anonymized Footer for peer-review"), 
 
                 html.Div([
-                    html.Img(src='/assets/unicz.png', style = {'right': '0%', 'width': '10%', 'height': '10%'}),
+                    html.Img(src='/assets/unicz.png', style = {'width': '100%', 'height': 'auto'}),
                 ], style = {
-                    'position': 'absolute',
+                    'width': '12%',  # Adjust the width of the image container
+                    'display': 'inline-block',
+                    'vertical-align': 'top',
                     'background-color': '#EBEBEB',
-                    'display': 'inline-block'}
-                ),
-
-                html.Div([
-                    html.Img(src='/assets/unical.png', style = {'left': '0%', 'width': '10%', 'height': '10%'}),  
-                    ], style = {
-                        'position': 'absolute',
-                        'background-color': '#EBEBEB',
-                        'display': 'inline-block'
                     }
                 ),
                 html.Div([
                     html.P(["Pietro Hiram Guzzi", html.Sup(1), ", Lomoio Ugo", html.Sup("1, 2"), ", Tommaso Mazza", html.Sup(3), " and Pierangelo Veltri", html.Sup(4), html.Br(), "(1) Magna Graecia University of Catanzaro, (2) Relatech SpA", html.Br(), "(3) IRCCS Casa Sollievo della Sofferenza, (4) University of Calabria Rende", html.Br()]),
                     ], style= {
-                        'position': 'absolute',
-                        'right': '10%',
-                        'left': '10%',
-                        'width': '80%',
-                        'height': '10%',
+                        'width': '70%',  # Adjust the width of the image container
+                        'vertical-align': 'middle',
                         'textAlign': 'center',
                         'background-color': '#EBEBEB',
                         'display': 'inline-block'
                     }
                 ),
-            ], style = {'width': '100%'})
+                html.Div([
+                    html.Img(src='/assets/unical.png', style = {'width': '100%', 'height': 'auto'}),  
+                    ], style = {
+                        'width': '18%',  # Adjust the width of the image container
+                        'display': 'inline-block',
+                        'vertical-align': 'top',
+                        'background-color': '#EBEBEB',
+                    }
+                ),
+            ], style = {'width': '100%',  # Ensure the row occupies full width
+                        'height': '10%',
+                        'textAlign': 'center',
+                        'background-color': '#EBEBEB'})
         ])
 
 
-download_button_style = {   'position': 'absolute', 'bottom': '6%', 'left': '47%', 'width': '10%',
+download_button_style = {   'position': 'absolute', 'top': '30%', 'right': '5%', 'width': '10%',
                             'background-color': '#34B212', 'height': '8%', 'text-align': 'center', 'display':'none'}
 
 upload_layout = html.Div([
@@ -230,7 +448,6 @@ upload_layout = html.Div([
         dbc.Button("Download Preprocessed File", id="download-button", style=download_button_style, n_clicks=0),
         dcc.Download(id="download-csv"),
     ]),
-    #footer
 ])
 
 
@@ -246,6 +463,28 @@ modal = dbc.Modal(
                     is_open=False,
                     fullscreen=True
                 )
+
+submit_style = {'position': 'absolute', 'bottom': '10%', 'right': '45%', 'width': '10%','background-color': '#34B212', 'height': '5%', 'text-align': 'center'}
+
+modal_hyper = dbc.Modal(
+                    [
+                        dbc.ModalHeader(dbc.ModalTitle("Config Params")),
+                        dbc.ModalBody(gaan_params_layout, id="modal-body-content"),
+                        dbc.ModalFooter(
+                            dbc.Button("Close", id="close-modal-params", n_clicks=0),
+                        ),
+                        # Submit button
+                     
+                        html.Button("Submit", id='submit-params-button-gaan', n_clicks=0, style=submit_style, hidden=False),
+                        html.Button("Submit", id='submit-params-button-ml', n_clicks=0, style=submit_style, hidden=True),
+
+                        # Placeholder for displaying the input values
+                        html.Div(id='output-container')    
+                    ],
+                    id="modal-hyper",
+                    is_open=False,
+                    fullscreen=True,
+             )
 
 embedding_layout = html.Div([
     
@@ -264,7 +503,6 @@ embedding_layout = html.Div([
             type="circle"
         )
     ]),
-    #footer
 ])
 
 analysis_layout = html.Div([
@@ -274,15 +512,25 @@ analysis_layout = html.Div([
             id='analysis-method',
             options=[
                 {'label': 'ML Binary Classification', 'value': 'ML'},
-                {'label': 'GAAN Anomaly Detection', 'value': 'GAAN'}
+                {'label': 'Node Anomaly Detection', 'value': 'GAAN (node)'},
+                {'label': 'Graph Anomaly Detection', 'value': 'GAAN (ISNs)'}
             ],
             value='ML', 
             style={'position': 'absolute', 'top': '13%', 'left': '16%', 'width': '70%', 'textAlign': 'center'}
         ),
-        dbc.Button("Analyze", id='analyze-button', style={
-            'position': 'absolute', 'top': '13%', 'right': '3%', 'width': '8%', 
-            'height': '4%', 'textAlign': 'center', 'background-color': '#34B212'
-        }, n_clicks=0),
+        html.Div([
+            dbc.Button("Analyze", id='analyze-button', style={
+                'display': 'inline-block', 'textAlign': 'center', 'background-color': '#34B212'
+            }, n_clicks=0),
+            dbc.Button("Config Params", id='modal-params-button', disabled=False, style={
+                'display': 'inline-block','textAlign': 'center', 'background-color': '#34B212'
+            }, n_clicks=0),
+        ], style={'position':'absolute', 'left': '5%', 'display': 'inline-block'}),
+        
+        dbc.Button("Save Models", id="save-models-button", color="primary", n_clicks=0, style={'position': 'absolute', 'top': '13%', 'right': '8%', 'width': '10%', 'textAlign': 'center'}),
+        html.Div(id="save-models-output", style={'position': 'absolute', 'top': '16%', 'right': '8%', "color": "green"}),
+
+        modal_hyper,
         dcc.Loading(
             id="loading-analysis-output",
             children=[
@@ -293,7 +541,6 @@ analysis_layout = html.Div([
             type="circle"
         )
     ]),
-    #footer
 ])
 
 explainability_layout = html.Div([
@@ -316,7 +563,8 @@ explainability_layout = html.Div([
                 id='analysis-type',
                 options=[
                     {'label': 'ML Binary Classification', 'value': 'ML'},
-                    {'label': 'GAAN Anomaly Detection', 'value': 'GAAN'}
+                    {'label': 'Node Anomaly Detection', 'value': 'GAAN (node)'},
+                    {'label': 'Graph Anomaly Detection', 'value': 'GAAN (ISNs)'}
                 ],
                 value='ML', 
                 style={'position': 'absolute', 'top': '13%', 'left': '15%', 'width': '70%', 'textAlign': 'center'}
@@ -332,7 +580,6 @@ explainability_layout = html.Div([
             overlay_style={"visibility":"visible"},
             type="circle"
         )
-        #footer
 ])
 
 
@@ -343,7 +590,6 @@ homepage_layout = html.Div([
     html.Div(id='page-content'),#, children = footer),  # This is where page content will be dynamically inserted
     modal
 ])
-
 
 # Main app layout
 app.layout = homepage_layout
@@ -375,7 +621,7 @@ def upload_preprocessed_file(gene_file):
         except Exception as e:
             return html.Div([
                 html.P('There was an error processing this gene file.',
-                style = {'color': 'red', 'width': '100%', 'textAlign': 'center'})
+                style = {'color': 'red', 'width': '100%', 'textAlign': 'center'}),
             ])
         
         progress = 20
@@ -389,13 +635,14 @@ def upload_preprocessed_file(gene_file):
         except Exception as e:
             return html.Div([
                 html.P("'Target' column for patient binary diagnosis not found.",
-                style = {'color': 'red', 'width': '100%', 'textAlign': 'center'})
+                style = {'color': 'red', 'width': '100%', 'textAlign': 'center'}),
             ])
         
         progress = 40
         targets_uq = np.unique(targets['Target'].values)
         if len(targets_uq) > 2:
             raise Exception("Target column must have only 2 unique values to perform Anomaly Detection and Binary Classification. Found {} unique targets.".format(len(targets_uq)))
+
 
         df = expr.join(targets)
 
@@ -424,7 +671,8 @@ def upload_preprocessed_file(gene_file):
                     columns=columns,
                     page_size=10, 
                     style_table={'overflowY': 'auto', 'overflowX': 'scroll', 'height': '20%'},  # Scrollable table height
-                )
+                ),
+                footer 
         ])
     
 def upload_file(gene_file):
@@ -445,17 +693,25 @@ def upload_file(gene_file):
         decoded = base64.b64decode(content_string)
         try:
             # Assume that the user uploaded a CSV file
-            gene_data = utils.read_gene_expression(io.StringIO(decoded.decode('utf-8')))
+            skiprows, gene_data = utils.read_gene_expression(io.StringIO(decoded.decode('utf-8')))
         except Exception as e:
+            traceback_str = traceback.format_exc()
+    
             return html.Div([
-                html.P('There was an error processing this gene file.',
-                style = {'color': 'red', 'width': '100%', 'textAlign': 'center'})
+                html.P('There was an error processing this gene file. {} \n {}'.format(e, traceback_str),
+                style = {'color': 'red', 'width': '100%', 'textAlign': 'center'}),
             ])
         progress = 10
 
+        if skiprows == 0:
+            return html.Div([
+                html.P("There was an error processing this gene file. Can't find automatically a skiprow value to read the file",
+                style = {'color': 'red', 'width': '100%', 'textAlign': 'center'}), 
+            ])
+
         print("Detecting Geo accession code")
         add_log_message("Detecting Geo accession code")
-        geo_code = utils.find_geoaccession_code(io.StringIO(decoded.decode('utf-8')))
+        geo_code = utils.find_geoaccession_code(io.StringIO(decoded.decode('utf-8')), skiprows)
         if geo_code is None:
             raise Exception ("Cannot detect GEO accession code from file. File must be corrupted.")
         print("Detecting platforms")
@@ -471,30 +727,32 @@ def upload_file(gene_file):
         progress = 35
 
         print("Downloading annotation file")  
-        
         found_platform, annotation_df = utils.get_annotation_df(gse, expr, platforms)
         if found_platform is None:
             raise Exception ("Cannot detect any valid platforms from file. File must be corrupted.")
         targets = utils.get_targets(gene_data)
         progress = 50 
         
+        # Convert all columns to numeric, invalid entries become NaN
+        expr = expr.apply(pd.to_numeric, errors='coerce')
+
         #print("Expr:", expr)
         print("Targets:", targets)
         df = expr.join(targets)
     
         print("Preprocessing")
         add_log_message("Renaming columns & Replacing none values.")
+        #print(annotation_df.shape, annotation_df.columns)
         expr = preprocessing.preprocess(df, annotation_df, need_rename=True) 
         progress = 90
         #print("Preprocessed:", expr)
         
-
         if "Target" in expr.columns:
             expr = expr.drop("Target", axis=1)
         
         targets_uq = np.unique(targets['Target'].values)
         if len(targets_uq) > 2:
-            raise Exception("Target column must have only 2 unique values to perform Anomaly Detection and Binary Classification. Found {} unique targets.".format(len(targets_uq)))
+            raise Exception ("Target column must have only 2 unique values to perform Anomaly Detection and Binary Classification. Found {} unique targets.".format(len(targets_uq)))
        
         
         limited_expr = expr.iloc[:10, :50]
@@ -518,10 +776,118 @@ def upload_file(gene_file):
                     page_size=10, 
                     style_table={'overflowY': 'auto', 'overflowX': 'scroll', 'height': '20%'},  # Scrollable table height
                 ),
-                #footer
+                footer
         ])
-        #FIX PREPROCESSING
-    
+
+def create_div_captum(model_name):
+
+    global models 
+    global mydataloader
+    global edge_list 
+
+    if model_name in models.keys():
+        if model_name != "GCN":
+            div = html.Div([html.P("Captum explainations are not available for {}.".format(model_name), style={'color': 'red', 'fontWeight': 'bold'})])
+            return div
+        else:
+            G = nx.from_edgelist(edge_list)       
+            model = models[model_name]
+            img1, img2 = captum_explainations.explain_with_captum(model, model_name, mydataloader, G)
+            div = html.Div([
+                html.Div([
+                    html.P("Integrated Gradients", style={'text-align': 'center', 'font-weight': 'bold'}),
+                    html.Img(src=img1, style={'width': '90%', 'display': 'block', 'margin': '0 auto'}),
+                ], style={'width': '45%', 'display': 'inline-block', 'vertical-align': 'top'}),
+
+                html.Div([
+                    html.P("Saliency Maps", style={'text-align': 'center', 'font-weight': 'bold'}),
+                    html.Img(src=img2, style={'width': '90%', 'display': 'block', 'margin': '0 auto'}),
+                ], style={'width': '45%', 'display': 'inline-block', 'vertical-align': 'top'}),
+            ], style={'text-align': 'center'})
+            return div
+
+def create_div_exp(captum_div, model_name):
+
+    global models 
+    global mydataloader 
+    global patients 
+    global edge_list
+
+    if model_name == "GAE":
+        return html.Div(html.P(
+            "Explanations are not available for GAE models.",
+            style={'color': 'red', 'fontWeight': 'bold'}
+        ))
+    else:
+        model = models[model_name]
+        y = mydataloader.y
+        if model_name == "GCN":
+            preds = gcn.test(model, mydataloader)
+        else:
+            preds = model.predict(mydataloader)
+        nodes, edges = dl.compute_elements_cyto(patients, edge_list, None, y.cpu(), preds.cpu(), isn = False)
+        return  html.Div([
+                
+                            html.Br(),
+                            html.Br(),
+                            html.Br(),
+                            html.Br(),
+                            html.Br(),
+                            html.Br(),
+
+                            dcc.Dropdown(
+                                id='dropdown-update-layout',
+                                value='grid',
+                                clearable=False,
+                                options=[
+                                    {'label': name.capitalize(), 'value': name}
+                                    for name in ['grid', 'random', 'circle', 'cose', 'concentric', 'breadthfirst']
+                                ]
+                            ),
+
+                            html.Div([
+                                html.Button('Add Node', id='btn-add-node', n_clicks_timestamp=0),
+                                html.Button('Remove Node', id='btn-remove-node', n_clicks_timestamp=0)
+                            ]),
+
+                            html.Div([
+                                html.P("Network:"),
+                                cyto.Cytoscape(
+                                    id='network',
+                                    elements=edges+nodes,
+                                    layout={'name': 'breadthfirst'},
+                                    style={'width': '100%', 'height': '400px'},
+                                    stylesheet=default_stylesheet,
+                                    responsive=True
+                                ),
+                                html.Div([
+                                    html.P("Clicked Node/Edge informations: "),
+                                    html.Pre(id='cytoscape-tapNodeData-json', children = "Click one node get more information", style=styles['pre']),
+                                    html.Pre(id='cytoscape-tapEdgeData-json', children = "Click one edge to visualize its information", style=styles['pre']),
+                                ]),
+                            ]),
+                    
+                            dcc.Graph(
+                                    id='exp-node', 
+                                    style = {'width': '50%', 'height': '400px', 'display':'inline-block'}
+                            ),
+                            html.Br(),
+                            dbc.Button("Popout Figure", id = "modal-expnode", n_clicks=0),
+
+                            captum_div, 
+
+                            html.P("Subgraph:"),
+                            cyto.Cytoscape(
+                                id='subnetwork',
+                                elements=edges+nodes,
+                                layout={'name': 'breadthfirst'},
+                                style={'width': '100%', 'height': '400px'},
+                                stylesheet=default_stylesheet,
+                                responsive=True
+                            ),
+                            footer
+                    ], style = {'position': "absolute", "width": "100%"})
+
 def update_explainability_ml(model_name):
     
     global expr 
@@ -546,7 +912,8 @@ def update_explainability_ml(model_name):
                             html.P(
                                 "SHAP explanations are not available for SVM and KNN models due to high memory demands.",
                                 style={'color': 'red', 'fontWeight': 'bold'}
-                            )
+                            ),
+                            footer
                 ], style = {"position": "fixed", "top": "40%", 'width': "100%", 'textAlign': 'center'})
             elif model_name == "LR":
                 fig = ml.explain_model(model, model_name, X, genes, X_train=X_train) 
@@ -627,10 +994,101 @@ def update_explainability_ml(model_name):
                     html.Div([
                          ml.get_plot("force-plot", {}, model, model_name, X, ys, genes, index = 0, top_n = 10, X_train = X_train, class_id = y, title=plot_title)
                     ], id = 'force-plot-div', style = {"width": "100%"})
-                ])
+                ]),
+                footer
             ])
     
     return html.Div()
+
+def create_div_exp_isn(isn_index, captum_div, model_name):
+
+    global models
+    global isns 
+    global mydataloader
+    global edge_list 
+
+    isn = isns[isn_index]
+    model = models[model_name]
+    y = mydataloader.y
+    preds = model.predict(mydataloader)
+
+    genes = []
+    for edge in edge_list:
+        node1, node2 = edge.split("_")
+        if node1 not in genes:
+            genes.append(node1)
+        if node2 not in genes:
+            genes.append(node2)
+
+    nodes, edges = dl.compute_elements_cyto(genes, edge_list, None, y.cpu(), preds.cpu(), isn = True)
+    
+    return html.Div([
+                html.Br(),
+                html.Br(),
+                html.Br(),
+                html.Br(),
+                html.Br(),
+                html.Br(),
+                # Dropdown to select graph
+                dcc.Dropdown(
+                    id='graph-selection-dropdown',
+                    options=[{'label': idx, 'value': idx} for idx, graph in enumerate(isns)],
+                    value=isn_index,  # Set the current graph as the selected value
+                    clearable=False
+                ),
+
+                dcc.Dropdown(
+                    id='dropdown-update-layout',
+                    value='grid',
+                    clearable=False,
+                    options=[
+                        {'label': name.capitalize(), 'value': name}
+                        for name in ['grid', 'random', 'circle', 'cose', 'concentric', 'breadthfirst']
+                    ]
+                ),
+
+                html.Div([
+                    html.Button('Add Node', id='btn-add-node', n_clicks_timestamp=0),
+                    html.Button('Remove Node', id='btn-remove-node', n_clicks_timestamp=0)
+                ]),
+
+                html.Div([
+                    html.P("Network:"),
+                    cyto.Cytoscape(
+                        id='network',
+                        elements=edges + nodes,
+                        layout={'name': 'breadthfirst'},
+                        style={'width': '100%', 'height': '400px'},
+                        stylesheet=default_stylesheet,
+                        responsive=True
+                    ),
+                    html.Div([
+                        html.P("Clicked Node/Edge informations: "),
+                        html.Pre(id='cytoscape-tapNodeData-json', children="Click one node to get more information", style=styles['pre']),
+                        html.Pre(id='cytoscape-tapEdgeData-json', children="Click one edge to visualize its information", style=styles['pre']),
+                    ]),
+                ]),
+
+                dcc.Graph(
+                    id='exp-node',
+                    style={'width': '50%', 'height': '400px', 'display': 'inline-block'}
+                ),
+                html.Br(),
+                dbc.Button("Popout Figure", id="modal-expnode", n_clicks=0),
+
+                captum_div,
+
+                html.P("Subgraph:"),
+                cyto.Cytoscape(
+                    id='subnetwork',
+                    elements=edges + nodes,
+                    layout={'name': 'breadthfirst'},
+                    style={'width': '100%', 'height': '400px'},
+                    stylesheet=default_stylesheet,
+                    responsive=True
+                ),
+                footer
+            ], style={'position': "absolute", "width": "100%"})
 
 def update_explainability_dl(model_name):
 
@@ -644,76 +1102,16 @@ def update_explainability_dl(model_name):
     global edge_weights 
     global models 
     global mydataloader 
+    global isns 
     
     if model_name is not None:
         if model_name in list(models.keys()):
-            
-            model = models[model_name]
-            y = mydataloader.y
-            edge_weights = mydataloader.edge_attr
-            preds = model.predict(mydataloader)
-            nodes, edges = dl.compute_elements_cyto(patients, edge_list, edge_weights.cpu(), y.cpu(), preds.cpu())
-            div = html.Div([
-                
-                    html.Br(),
-                    html.Br(),
-                    html.Br(),
-                    html.Br(),
-                    html.Br(),
-                    html.Br(),
-
-                    dcc.Dropdown(
-                        id='dropdown-update-layout',
-                        value='grid',
-                        clearable=False,
-                        options=[
-                            {'label': name.capitalize(), 'value': name}
-                            for name in ['grid', 'random', 'circle', 'cose', 'concentric', 'breadthfirst']
-                        ]
-                    ),
-
-                    html.Div([
-                        html.Button('Add Node', id='btn-add-node', n_clicks_timestamp=0),
-                        html.Button('Remove Node', id='btn-remove-node', n_clicks_timestamp=0)
-                    ]),
-
-                    html.Div([
-                        html.P("Network:"),
-                        cyto.Cytoscape(
-                            id='network',
-                            elements=edges+nodes,
-                            layout={'name': 'breadthfirst'},
-                            style={'width': '100%', 'height': '400px'},
-                            stylesheet=default_stylesheet,
-                            responsive=True
-                        ),
-                        html.Div([
-                            html.P("Clicked Node/Edge informations: "),
-                            html.Pre(id='cytoscape-tapNodeData-json', children = "Click one node get more information", style=styles['pre']),
-                            html.Pre(id='cytoscape-tapEdgeData-json', children = "Click one edge to visualize its information", style=styles['pre']),
-                        ]),
-                    ]),
-                    
-                    dcc.Graph(
-                            id='exp-node', 
-                            style = {'width': '50%', 'height': '400px', 'display':'inline-block'}
-                    ),
-                    html.Br(),
-                    dbc.Button("Popout Figure", id = "modal-expnode", n_clicks=0),
-
-                    html.P("Subgraph:"),
-                    cyto.Cytoscape(
-                        id='subnetwork',
-                        elements=edges+nodes,
-                        layout={'name': 'breadthfirst'},
-                        style={'width': '100%', 'height': '400px'},
-                        stylesheet=default_stylesheet,
-                        responsive=True
-                    ),
-                    #footer
-            ], style = {'position': "absolute", "width": "100%"})
-            return div
-        
+            if "isn" in model_name:
+                captum_div = create_div_captum(model_name)
+                return create_div_exp_isn(0, captum_div, model_name)
+            else:
+                captum_div = create_div_captum(model_name)
+                return create_div_exp(captum_div, model_name)             
         else:
             return None
     
@@ -767,7 +1165,7 @@ def update_embeddings(update=False):
                                 )],       
                         style={'width': '100%', 'height': '20%'}
                         ),
-                        #footer
+                        footer
             ])
             saved_figures["pca-plot"] = fig_pca
             saved_figures["tsne-plot"] = fig_tsne
@@ -808,7 +1206,7 @@ def update_embeddings(update=False):
                                 )],       
                         style={'top': '55%', 'width': '100%', 'height': '20%'}
                         ),
-                        #footer
+                        footer
                     ])
                 
                 return div 
@@ -818,6 +1216,7 @@ def update_embeddings(update=False):
             
     else:
         return embedding_layout
+
 
 def update_analysis_output():
     
@@ -838,14 +1237,11 @@ def update_analysis_output():
     global config 
     global edge_list 
     global node_mapping
-    global map_edgeattr
-    global explainer 
+    global explainers 
     global saved_figures 
-
-    if method_g == 'GAAN':
-        toprint = "Anomaly Detection"
-    else:
-        toprint = "Binary Classification"
+    global ml_params 
+    global gaan_params 
+    global isns 
     
         
     if method_g == 'ML':
@@ -853,12 +1249,27 @@ def update_analysis_output():
         if fig_box is None or fig_roc is None or fig_roc_test is None:
                
             df = pd.concat([expr, targets], axis=1)
-            X_train, X_test, y_train, y_test = ml.train_test_split(df)
+            if ml_params is not None:
+                train_size = ml_params["train_size"]
+                test_size = 1.0 - train_size
+            else:
+                train_size = 0.7
+                test_size = 0.3
+
+            if ml_params is None:
+                ml_params = ml_config.ML_config("lbfgs", "l2", 100, "linear", 1.0, 5, "euclidean", 100, -1, -1, 2, train_size, 2)
         
-            models_tuple, fig_roc, fig_box = ml.baselineComparison(X_train, y_train)
+
+            X_train, X_test, y_train, y_test = ml.train_test_split(df, test_size = test_size)
+            
+            models_tuple, fig_roc, fig_box = ml.baselineComparison(X_train, y_train, params = ml_params)
             temp = {}
             for model_name, model in models_tuple:
                 temp[model_name] = model
+
+            if "Temp" not in models.keys():
+                for model_name, model in models.items():
+                    temp[model_name] = model
             models = temp 
         
             df_result = ml.create_results_df(models, X_test, y_test)
@@ -871,7 +1282,7 @@ def update_analysis_output():
             preds = best_model.predict(X_test)
             classes = {0: "Normal", 1: "Anomalous"}
             cm = confusion_matrix(y_test, preds)
-            fig_confm = dl.plot_cm(classes, cm)
+            fig_confm = dl.plot_cm(classes, cm, best_modelname)
 
             saved_figures["roc-test"] = fig_roc_test
             saved_figures["boxplot"] = fig_box
@@ -940,52 +1351,276 @@ def update_analysis_output():
                                     html.Br(),
                                     dbc.Button("Popout Figure", id = "modal-confm",  n_clicks=0)
                                 ], style = {'display': 'inline-block'}),
-                            ])
-                            #footer
+                            ]),
+                            footer
                 ], style = {'width': '100%'})
         
-    elif method_g == 'GAAN':
+    elif method_g == 'GAAN (node)':
         
-        edges_i, edge_list, edge_weights, map_edgeattr = utils.get_edges_by_sim(expr)
+        print("Creating Graph from gene expression array")
+        if edge_index is None:
 
-        # Parse the edges and create node mapping
-        source_nodes, target_nodes, node_mapping = utils.parse_edges(edges_i)
-  
-        # Create edge_index tensor
-        edge_index = utils.create_edge_index(source_nodes, target_nodes)
+            edges_i, edge_list, _ = utils.get_edges_by_sim(expr)
+
+            # Parse the edges and create node mapping
+            source_nodes, target_nodes, node_mapping = utils.parse_edges(edges_i)
+        
+            print("Creating Dataloader")
+            # Create edge_index tensor
+        
+            edge_index = utils.create_edge_index(source_nodes, target_nodes)
+
         x = expr.values
         y = targets.values
-        mydataloader = dl.create_torch_geo_data(x, y, edge_index, edge_weights)
+        mydataloader = dl.create_torch_geo_data(x, y, edge_index)
         node_mapping_rev = {value: key for key, value in node_mapping.items()}
-        dataloader_train, dataloader_test = dl.train_test_split_and_mask(mydataloader, map_edgeattr, node_mapping_rev)
-        model = dl.train_gaan(dataloader_train)
-        models["GAAN"] = model
+        print("Train - Test split")
+        dataloader_train, dataloader_test = dl.train_test_split_and_mask(mydataloader, node_mapping_rev, train_size = 0.6)
+        in_dim = dataloader_train.x.shape[1]
+
+
+        uqs, counts = np.unique(y, return_counts = True)
+        dict_counts = {}
+        for uq, count in zip(uqs, counts):
+            dict_counts[uq.item()] = count.item()
+        contamination = (dict_counts[1]/(dict_counts[0] + dict_counts[1]))*0.5
+
+        if gaan_params is not None:
+            if gaan_params.contamination is None:
+                gaan_params.contamination = contamination
+            gaan_params.isn = False 
+        else:
+            gpu = 0 if torch.cuda.is_available() else -1
+            gaan_params = gaan_config.GAAN_config(noise_dim=16, hid_dim=64, num_layers=2, dropout=0.3, contamination=contamination, lr = 0.00005, epoch = 200, gpu = gpu, batch_size=512, verbose = 1, isn = False)
+        
+        print("Create GAAN model")
+        model = dl.create_model(in_dim, gaan_params, isn = False)
+        model = dl.train_gaan(model, dataloader_train)
+        models["GAAN_node"] = model
         if "Temp" in models.keys():
             del models["Temp"]
-        df_result = dl.create_results_df(model, dataloader_test)
-        
+
         preds = model.predict(dataloader_test).cpu()
-        
         y_test = dataloader_test.y.cpu()
         classes = {0: "Normal", 1: "Anomalous"}
         cm = confusion_matrix(y_test, preds)
-        fig_cm = dl.plot_cm(classes, cm)
+        fig_cm = dl.plot_cm(classes, cm, "GAAN_node")
         fig_roc_test = ml.plot_roc_curve_(y_test, preds)
         saved_figures["confm"] = fig_cm 
-        saved_figures["roc-test"] = fig_roc_test
-
+        saved_figures["roc-test"] = fig_roc_test 
         explainer = Explainer(
             model=model,
-            algorithm=GNNExplainer(epochs=0),
+            algorithm=GNNExplainer(epochs=100, lr = 0.001),
             explanation_type='model',
             node_mask_type='attributes',
             edge_mask_type='object',
             model_config=dict(
                 mode='binary_classification',
                 task_level='node',
-                return_type='probs',
+                return_type='raw',
             ),
         )
+        models["GAAN_node"] = model
+        explainers["GAAN_node"] = explainer
+
+        gpu = 0 if torch.cuda.is_available() else -1
+        model_gae = GAE(gpu = gpu, hid_dim=gaan_params.hid_dim, num_layers=gaan_params.num_layers, dropout=gaan_params.dropout, contamination=gaan_params.contamination, lr=gaan_params.lr, epoch=gaan_params.epoch, batch_size=gaan_params.batch_size, verbose=gaan_params.verbose)
+        model_gae.fit(dataloader_train)
+        models["GAE"] = model_gae
+        preds = model.predict(dataloader_test).cpu()
+        cm = confusion_matrix(y_test, preds)
+        fig_cm = dl.plot_cm(classes, cm, "GAE")
+        fig_roc_test = ml.plot_roc_curve_(y_test, preds)
+        saved_figures["confm-gae"] = fig_cm 
+        saved_figures["roc-test-gae"] = fig_roc_test 
+        explainer = None
+        models["GAE"] = model
+        explainers["GAE"] = explainer
+
+        lr = 0.0001
+        hidden_dims = [32]
+        inchannels = mydataloader.x.shape[1]
+        model_gcn = gcn.GCN(inchannels, hidden_dims=hidden_dims).to(device)
+        criterion = torch.nn.CrossEntropyLoss()  # Define loss criterion.
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)  # Define optimizer.
+        for epoch in range(1000):
+            if epoch%100 == 0:
+                print("Training GCN, epoch {}".format(epoch))
+            loss = gcn.train(model_gcn, optimizer, criterion, dataloader_train)
+        models["GCN"] = model_gcn
+        preds = gcn.test(model_gcn, dataloader_test, optimizer = optimizer).cpu().detach().numpy()
+        cm = confusion_matrix(y_test, preds)
+        fig_cm = dl.plot_cm(classes, cm, "GCN")
+        fig_roc_test = ml.plot_roc_curve_(y_test, preds)
+        saved_figures["confm-gcn"] = fig_cm 
+        saved_figures["roc-test-gcn"] = fig_roc_test
+        explainer = Explainer(
+                model=model_gcn,
+                algorithm=GNNExplainer(epochs=100, lr = 0.001),
+                explanation_type='model',
+                node_mask_type='attributes',
+                edge_mask_type='object',
+                model_config=dict(
+                    mode='binary_classification',
+                    task_level='node',
+                    return_type='raw',
+                ),
+        )
+        explainers["GCN"] = explainer   
+
+
+        df_result = dl.create_results_df(models, dataloader_test)
+        columns = [{'name': col, 'id': col} for col in df_result.columns]
+        data = df_result.to_dict(orient='records')
+        return  html.Div([
+                              html.Br(),
+                              html.Br(),
+                              html.Br(),
+                              html.Br(),
+                              html.Br(),
+                              html.Br(),
+
+                              DataTable(
+                                    data=data,
+                                    columns=columns,
+                                    page_size=5, 
+                                    style_table={'overflowY': 'auto', 'overflowX': 'auto'},  # Scrollable table height
+                              ),
+                              html.Div([
+                                  html.Div([
+                                      dcc.Graph(
+                                            id='roc-curve-test-gcn',
+                                            figure=saved_figures["roc-test-gcn"],
+                                            config = config,
+                                            style={'width': '40%', 'height': '20%', 'right': '5%'}  # Adjust height as needed
+                                      ),
+                                      html.Br(),
+                                      dbc.Button("Popout Figure", id = "modal-roctest-gcn", n_clicks=0),
+                                  ], style = {'display': 'inline-block'}),
+                                  html.Div([
+                                      # First ROC Curve
+                                      dcc.Graph(
+                                        id='conf-matrix-gcn',
+                                        figure=saved_figures["confm-gcn"],
+                                        config = config,
+                                        style={'height': '20%', 'width': '40%', 'left': '5%'}  # Adjust height as needed
+                                      ),
+                                      html.Br(),
+                                      dbc.Button("Popout Figure", id = "modal-confm-gcn", n_clicks=0)
+                                  ], style = {'display': 'inline-block'})
+
+                              ]),
+
+                              html.Div([
+                                  html.Div([
+                                      dcc.Graph(
+                                            id='roc-curve-test-gae',
+                                            figure=saved_figures["roc-test-gae"],
+                                            config = config,
+                                            style={'width': '40%', 'height': '20%', 'right': '5%'}  # Adjust height as needed
+                                      ),
+                                      html.Br(),
+                                      dbc.Button("Popout Figure", id = "modal-roctest-gae", n_clicks=0),
+                                  ], style = {'display': 'inline-block'}),
+                                  html.Div([
+                                      # First ROC Curve
+                                      dcc.Graph(
+                                        id='conf-matrix-gae',
+                                        figure=saved_figures["confm-gae"],
+                                        config = config,
+                                        style={'height': '20%', 'width': '40%', 'left': '5%'}  # Adjust height as needed
+                                      ),
+                                      html.Br(),
+                                      dbc.Button("Popout Figure", id = "modal-confm-gae", n_clicks=0)
+                                  ], style = {'display': 'inline-block'})
+
+                              ]),
+
+                              html.Div([
+                                  html.Div([
+                                      dcc.Graph(
+                                            id='roc-curve-test',
+                                            figure=saved_figures["roc-test"],
+                                            config = config,
+                                            style={'width': '40%', 'height': '20%', 'right': '5%'}  # Adjust height as needed
+                                      ),
+                                      html.Br(),
+                                      dbc.Button("Popout Figure", id = "modal-roctest", n_clicks=0),
+                                  ], style = {'display': 'inline-block'}),
+                                  html.Div([
+                                      # First ROC Curve
+                                      dcc.Graph(
+                                        id='conf-matrix',
+                                        figure=saved_figures["confm"],
+                                        config = config,
+                                        style={'height': '20%', 'width': '40%', 'left': '5%'}  # Adjust height as needed
+                                      ),
+                                      html.Br(),
+                                      dbc.Button("Popout Figure", id = "modal-confm", n_clicks=0)
+                                  ], style = {'display': 'inline-block'})
+
+                              ]),
+   
+                              footer
+            ], style={'top': '18%', 'width': '100%'})
+    
+    elif method_g == "GAAN (ISNs)": 
+
+        print("Creating ISNs from gene expression arrays")
+        
+        isns, interaction_df = utils.create_sparse_isns(expr)
+        isns = torch.stack(isns).to(device)
+        isns = isns.T
+        edge_list = [row["feature_1"]+"_"+row["feature_2"] for index, row in interaction_df.iterrows()]
+
+        # Parse the edges and create node mapping
+        source_nodes, target_nodes, node_mapping = utils.parse_edges(edge_list)
+
+        # Create edge_index tensor
+        edge_index = utils.create_edge_index(source_nodes, target_nodes)
+    
+        x = torch.tensor(isns).to(device)
+        y = torch.tensor(targets.values).to(device).flatten()
+        edge_index = edge_index.to(device)
+
+        uqs, counts = torch.unique(y, return_counts = True)
+        dict_counts = {}
+        for uq, count in zip(uqs, counts):
+            dict_counts[uq.item()] = count.item()
+        contamination = (dict_counts[1]/(dict_counts[0] + dict_counts[1]))*0.5
+
+        if gaan_params is not None:
+            if gaan_params.contamination is None:
+                gaan_params.contamination = contamination
+            gaan_params.isn = True 
+        else:
+            gpu = 0 if torch.cuda.is_available() else -1
+            gaan_params = gaan_config.GAAN_config(noise_dim=16, hid_dim=4, num_layers=4, dropout=0.3, contamination=contamination, lr = 0.0005, epoch = 400, gpu = gpu, batch_size=64, verbose = 1, isn = True)
+
+        mydataloader = dl.create_torch_geo_data(x, y, edge_index)
+        node_mapping_rev = {value: key for key, value in node_mapping.items()}
+        
+        print("Train - Test split")
+        dataloader_train, dataloader_test = dl.train_test_split_and_mask(mydataloader, node_mapping_rev, train_size = 0.7)
+        in_dim = dataloader_train.x.shape[1]
+        
+        print("Create GAAN model")
+        model = dl.create_model(in_dim, gaan_params, isn = True)
+        model = dl.train_gaan(model, dataloader_train)
+        models["GAAN_isn"] = model
+        if "Temp" in models.keys():
+            del models["Temp"]
+        df_result = dl.create_results_df({"GAAN_isn": model}, dataloader_test)
+        
+        preds = model.predict(dataloader_test).cpu()
+        
+        y_test = dataloader_test.y.cpu()
+        classes = {0: "Normal", 1: "Anomalous"}
+        cm = confusion_matrix(y_test, preds)
+        fig_cm = dl.plot_cm(classes, cm, "GAAN_isn")
+        fig_roc_test = ml.plot_roc_curve_(y_test, preds)
+        saved_figures["confm"] = fig_cm 
+        saved_figures["roc-test"] = fig_roc_test
         
         columns = [{'name': col, 'id': col} for col in df_result.columns]
         data = df_result.to_dict(orient='records')
@@ -1028,9 +1663,12 @@ def update_analysis_output():
 
                               ]),
    
-                              #footer
+                              footer
             ], style={'top': '18%', 'width': '100%'}
         ) 
+    
+    else:
+        return dash.no_update 
 
 # Callback to update page content based on URL
 @app.callback(
@@ -1044,6 +1682,7 @@ def update_layout(pathname, n_clicks):
     global limited_expr
     global df_result
     global fig_pca
+    global edge_index
     global model_name 
     global method_g 
     global gene_data 
@@ -1066,10 +1705,12 @@ def update_layout(pathname, n_clicks):
     global download_button_style
     global nodes 
     global edges 
-    global explainer 
-    global map_edgeattr
+    global explainers
+    global isns 
     global node_mapping
     global genes 
+    global gaan_params
+    global ml_params 
 
     # Debugging print statements
     
@@ -1115,7 +1756,7 @@ def update_layout(pathname, n_clicks):
                                 page_size=10,
                                 style_table={'overflowY': 'auto', 'overflowX': 'scroll', 'height': '20%'},  # Scrollable table height
                             ), 
-                            #footer
+                            footer
                     ])
             
                 else: 
@@ -1130,6 +1771,9 @@ def update_layout(pathname, n_clicks):
             # Global variables to hold the data
             gene_data = None
             expr = None 
+            edge_index = None
+            gaan_params = None
+            ml_params = None 
             targets = None
             fig_pca = None
             fig_tsne = None
@@ -1155,22 +1799,28 @@ def update_layout(pathname, n_clicks):
             progress = 0
             nodes = []
             edges = []
-            explainer = None 
+            explainers = {} 
             node_mapping = None 
-            map_edgeattr = None
+            isns = None 
             analysis_options = {
                 'ML': ['KNN', 'LR', 'DT', 'SVM', 'RF'], #['LDA', 'NB', 'KNN', 'LR', 'DT', 'SVM', 'RF']
-                'GAAN': ['GAAN']
+                'GAAN (node)': ['GAAN_node', 'GCN', 'GAE'],
+                'GAAN (ISNs)': ['GAAN_isn']
             }
+
             
-            download_button_style = {   'position': 'absolute', 'bottom': '6%', 'left': '47%', 'width': '10%',
+            download_button_style = {'position': 'absolute', 'top': '30%', 'right': '5%', 'width': '10%',
                             'background-color': '#34B212', 'height': '8%', 'text-align': 'center', 'display':'none'}
+
             if pathname == "/upload":
                 return upload_layout
+
             elif pathname == "/embeddings":
                 return embedding_layout
+
             elif pathname == '/analysis':
                 return analysis_layout
+
             elif pathname == '/explain':
                 return explainability_layout
     
@@ -1258,7 +1908,9 @@ def update_upload_onclick(upload_nclicks, gene_file, preprocessed):
                         page_size=5,
                         style_table={'overflowY': 'auto', 'overflowX': 'scroll', 'height': '20%'}, # Scrollable table height
                     ),
-                    #footer
+                    dbc.Button("Download Preprocessed File", id="download-button", style=download_button_style, n_clicks=0),
+                    dcc.Download(id="download-csv"),
+                    footer
         ])
         return div, {'display': 'none'}, True, download_button_style
     
@@ -1335,6 +1987,34 @@ def toogle_modal_exp_ml(shapexp_n, shapsum_n, closemodal_n):
     else:
         is_open = False
     return fig, is_open
+
+
+# Callback to update page content based on upload file button clicks
+@app.callback(
+    Output("modal-hyper", "is_open"),
+    Output("output-container", "children", allow_duplicate = True),
+    Input('modal-params-button', 'n_clicks'),
+    Input("close-modal-params", "n_clicks"),
+    prevent_initial_call=True  # Ensure callback doesn't run on load
+)
+def toogle_modal_params(open_n, close_n):
+
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        button_id = 'No clicks yet'
+    else:
+        button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+   
+    is_open = False 
+
+    if button_id == 'close-modal-params':
+        return False, ""
+    elif button_id == 'modal-params-button':
+        is_open = True
+    else:
+        is_open = False
+    return is_open, dash.no_update
+
 
 # Callback to update page content based on upload file button clicks
 @app.callback(
@@ -1465,7 +2145,7 @@ def toogle_modal_analysis_ml(boxp_n, roc_n, roctest_n, confm_n, closemodal_n):
 # Callback to update page content based on analyze button clicks
 @app.callback(
     Output('model-dropdown', 'options'),
-    Input("analysis-type", "value"),
+    Input("analysis-type", "value")
 )
 def update_dropdown_models(method):
     
@@ -1479,6 +2159,25 @@ def update_dropdown_models(method):
         return options
     else:
         return [{'label': None, 'value': None}]
+
+
+# Callback to update page content based on analyze button clicks
+@app.callback(
+    Output('modal-body-content', 'children'),
+    Output('submit-params-button-gaan', 'hidden'),
+    Output('submit-params-button-ml', 'hidden'),
+    Input('analysis-method', 'value')
+)
+def update_visibility_modal(method):
+    
+    # Debugging print statements
+    print(f"Changing modal body and button visibility")
+
+    if "GAAN" in method:
+        return gaan_params_layout, False, True 
+    else:
+        return ml_params_layout, True, False 
+  
 
 # Callback to update the file name
 @app.callback(
@@ -1546,7 +2245,8 @@ def update_embeddings_onclick(embeddings_nclicks):
                 html.Br(),
                 html.Br(),
                 html.P("Upload a gene expression file first.",
-                style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'})
+                style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'}),
+                footer
             ])
         return div 
 
@@ -1560,6 +2260,7 @@ def update_embeddings_onclick(embeddings_nclicks):
 def download_onclick(download_nclicks):
     
     global expr 
+    global targets 
 
     # Debugging print statements
     print(f"Button clicks - Download: {download_nclicks}")
@@ -1573,7 +2274,9 @@ def download_onclick(download_nclicks):
     
     if button_id == 'download-button':
         if expr is not None:
-            return dcc.send_data_frame(expr.to_csv, "preprocessed_data.csv")
+            #print(targets)
+            df = pd.concat([expr, targets], axis=1)
+            return dcc.send_data_frame(df.to_csv, "preprocessed_data.csv")
 
 
 # Callback to update page content based on analyze button clicks
@@ -1608,16 +2311,18 @@ def update_analyze_onclick(analyze_nclicks, method):
                 html.Br(),
                 html.Br(),
                 html.P("Upload a gene expression file first.",
-                style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'})
+                style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'}),
+                footer
             ])
             return div 
     return dash.no_update
 
 # Callback to update page content based on analyze button clicks
 @app.callback(
-    Output("explain-output", "children"),
+    Output("explain-output", "children", allow_duplicate=True),
     Input("explain-button", "n_clicks"),
-    Input("model-dropdown", "value")
+    Input("model-dropdown", "value"),
+    prevent_initial_call = True
 )
 def update_explain_onclick(explain_nclicks, model_name_in):
 
@@ -1651,7 +2356,8 @@ def update_explain_onclick(explain_nclicks, model_name_in):
                 html.Br(),
                 html.Br(),
                 html.P("Upload a gene expression file first.",
-                style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'})
+                style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'}), 
+                footer 
             ])
         return div 
     return dash.no_update
@@ -1694,7 +2400,7 @@ styles = {
     }
 }
 
-@callback(Output('network', 'layout'),
+@app.callback(Output('network', 'layout'),
               Input('dropdown-update-layout', 'value'))
 def update_layout(layout):
     return {
@@ -1759,7 +2465,7 @@ def get_current_and_deleted_nodes(elements):
 
     return current_nodes, deleted_nodes
 
-@callback(Output('cytoscape-tapEdgeData-json', 'children'),
+@app.callback(Output('cytoscape-tapEdgeData-json', 'children'),
           Input('network', 'tapEdgeData'),
           prevent_initial_call = True)
 def displayTapEdgeData(data):
@@ -1778,7 +2484,7 @@ def updateExpOnTapNode(node_data):
     global genes 
     global node_mapping 
     global mydataloader 
-    global explainer 
+    global explainers 
     global expr 
     global saved_figures
 
@@ -1787,11 +2493,12 @@ def updateExpOnTapNode(node_data):
         node = node_data["id"]
         id = node_mapping[node]
         genes = expr.columns
+        explainer = explainers[model_name]
         fig = dl.plotly_featureimportance_from_gnnexplainer(explainer, mydataloader, id, genes)
         saved_figures['expnode'] = fig
         return fig
 
-@callback(
+@app.callback(
           Output('subnetwork', 'elements'),
           Input('network', 'tapNodeData'),
           prevent_initial_call = True
@@ -1808,7 +2515,7 @@ def updateSubgraphOnTapNode(node_data):
         elements = dl.get_subgraph(node_data, nodes, edges)
         return elements
 
-@callback(Output('cytoscape-tapNodeData-json', 'children'),
+@app.callback(Output('cytoscape-tapNodeData-json', 'children'),
           Input('network', 'tapNodeData'),
           prevent_initial_call = True
           )
@@ -1844,16 +2551,140 @@ def update_forceplot(patient_idx):
     
     return ml.get_plot("force-plot", {}, model, model_name, X, ys, genes, index = patient_idx, top_n = 10, X_train = X_train, class_id = y, title=plot_title)
 
+
+
+# Callback to handle the form submission and display selected values
+@app.callback(
+    Output('output-container', 'children', allow_duplicate=True),
+    [Input('submit-params-button-gaan', 'n_clicks'),
+    Input('noise_dim', 'value'),
+    Input('hid_dim', 'value'),
+    Input('num_layers', 'value'),
+    Input('dropout', 'value'),
+    Input('contamination', 'value'),
+    Input('lr', 'value'),
+    Input('epoch', 'value'),
+    Input('gpu', 'value'),
+    Input('batch_size', 'value'),
+    Input('verbose', 'value'),
+    ],
+    prevent_initial_call=True
+)
+def update_gaan_params(n_clicks, noise_dim, hid_dim, num_layers, dropout, contamination, lr, epoch, gpu, batch_size, verbose):
+    
+    global gaan_params 
+
+    print("Saving GAAN params")
+
+    if n_clicks > 0:
+        
+        gaan_params = gaan_config.GAAN_config(noise_dim=noise_dim, hid_dim=hid_dim, num_layers=num_layers, dropout=dropout, contamination=contamination, lr = lr, epoch = epoch, gpu = gpu, batch_size=batch_size, verbose = verbose)
+        return html.Div([
+            html.H4("Submitted Parameters:"),
+            html.P(f"Noise Dimension: {noise_dim}"),
+            html.P(f"Hidden Dimension: {hid_dim}"),
+            html.P(f"Number of Layers: {num_layers}"),
+            html.P(f"Dropout Rate: {dropout}"),
+            html.P(f"Contamination: {contamination}"),
+            html.P(f"Learning Rate: {lr}"),
+            html.P(f"Number of Epochs: {epoch}"),
+            html.P(f"GPU Index: {gpu}"),
+            html.P(f"Batch Size: {batch_size}"),
+            html.P(f"Verbosity Mode: {verbose}")
+        ])
+    
+    return dash.no_update
+
+
+@app.callback(
+    Output("output-container", "children", allow_duplicate=True),  # A div to display the saved data for confirmation
+    [Input("submit-params-button-ml", "n_clicks"),
+     Input("lr-solver", "value"),
+     Input("lr-penalty", "value"),
+     Input("lr-max-iter", "value"),
+     Input("svm-kernel", "value"),
+     Input("svm-c", "value"),
+     Input("knn-k", "value"),
+     Input("knn-metric", "value"),
+     Input("rf-n-estimators", "value"),
+     Input("rf-max-depth", "value"),
+     Input("dt-max-depth", "value"),
+     Input("dt-min-samples-split", "value"),
+     Input("split-train", "value"),
+     Input("cv-split", "value")
+    ],
+    prevent_initial_call = True
+)
+def update_params_ml(n_clicks, lr_solver, lr_penalty, lr_max_iter, svm_kernel, svm_c, knn_k, knn_metric, rf_n_estimators, rf_max_depth, dt_max_depth, dt_min_samples_split, train_split, cv_n_splits):
+    
+    global ml_params
+
+    print("update ML params")
+
+    if n_clicks > 0:
+        
+        ml_params = ml_config.ML_config(lr_solver, lr_penalty, lr_max_iter, svm_kernel, svm_c, knn_k, knn_metric, rf_n_estimators, rf_max_depth, dt_max_depth, dt_min_samples_split, train_split, cv_n_splits)
+        
+        # Return confirmation message (or save output) 
+        return html.Div([
+            html.H4("Submitted Parameters:"),
+            html.P(f"Logistic Regression solver: {lr_solver}"),
+            html.P(f"Logistic Regression max_iter: {lr_max_iter}"),
+            html.P(f"SVM kernel: {svm_kernel}"),
+            html.P(f"SVM C: {svm_c}"),
+            html.P(f"KNN number of neighbours 'k': {knn_k}"),
+            html.P(f"KNN distance metric: {knn_metric}"),
+            html.P(f"Random Forest number of estimators: {rf_n_estimators}"),
+            html.P(f"Random Forest trees max_depth: {rf_max_depth}"),
+            html.P(f"Decision tree max_depth: {dt_max_depth}"),
+            html.P(f"Decision tree min_samples_split: {dt_min_samples_split}"),
+            html.P(f"Train split: {train_split}"),
+            html.P(f"Cross validation n_splits: {cv_n_splits}")
+        ])
+    return dash.no_update
+
+@app.callback(
+    Output("save-models-output", "children", allow_duplicate = True),
+    Input("save-models-button", "n_clicks"),
+    prevent_initial_call=True  # Only trigger after button is clicked
+)
+def save_models(n_clicks):
+    if n_clicks > 0:
+        #save_paths = []  # List to store paths of saved models for confirmation messages
+
+        sep = os.sep 
+
+        for model_name, model_obj in models.items():
+            # Set file paths for each model
+            if "GAAN" in model_name:
+                # Save PyTorch model state dictionary
+                file_path = f"saved_models{sep}{model_name}_model.pth"
+                torch.save(model_obj.state_dict(), file_path)
+            else:
+                # Save non-PyTorch model (e.g., scikit-learn) with joblib
+                file_path = f"saved_models{sep}{model_name}_model.joblib"
+                joblib.dump(model_obj, file_path)
+
+            # Append the saved file path to the list
+            #save_paths.append(file_path)
+
+        # Return a confirmation message with saved file paths
+        return f"Models saved successfully"
+    
+    return ""
+
+@app.callback(
+    Output('explain-output', 'children', allow_duplicate=True),
+    Input('graph-selection-dropdown', 'value'),
+    Input("model-dropdown", "value"),
+    prevent_initial_call = True
+)
+def update_graph_div(selected_graph_index, model_name):
+    captum_div = create_div_captum(model_name)
+    return create_div_exp_isn(selected_graph_index, captum_div, model_name)
+
 if __name__ == '__main__':
         
     print("Running ADIN")
     webbrowser.open(html_plot_path)    
     app.run_server(debug=False)
-    
-
-
-
-
-#EXPLAINABILITY E DL: add only GraphSVX shap 
-#fix preprocessing
-#FIX THE FOOTER
