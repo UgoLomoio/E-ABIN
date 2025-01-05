@@ -20,4 +20,4 @@ dash-cytoscape
 ninja
 isn_tractor
 numpy==2.0
-jupyter lab
+jupyterlab
