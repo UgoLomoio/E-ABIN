@@ -405,7 +405,7 @@ download_button_style = {   'position': 'absolute', 'top': '30%', 'right': '5%',
 upload_layout = html.Div([
     
     html.Div([    
-        html.H4("Upload Gene Expression File", style={'position': 'absolute', 'left': '1%'}),
+        html.H4("Load Dataset", style={'position': 'absolute', 'left': '1%'}),
         dcc.Upload(
             id='upload-data',
             children=html.Div(['Drag and Drop or ', html.A('Select Files')]),
@@ -654,7 +654,7 @@ def upload_preprocessed_file(gene_file):
         limited_expr = limited_expr.join(targets)
         limited_expr = limited_expr.T
         limited_expr = limited_expr.reset_index()
-        
+        limited_expr = limited_expr.rename(columns = {'index': 'Gene'})
         columns = [{'name': col, 'id': col} for col in limited_expr.columns]
         data = limited_expr.to_dict(orient='records')
             
@@ -872,7 +872,7 @@ def create_div_exp(captum_div, model_name):
                                     style = {'width': '50%', 'height': '400px', 'display':'inline-block'}
                             ),
                             html.Br(),
-                            dbc.Button("Popout Figure", id = "modal-expnode", n_clicks=0),
+                            dbc.Button("Enlarge Figure", id = "modal-expnode", n_clicks=0),
 
                             captum_div, 
 
@@ -963,7 +963,7 @@ def update_explainability_ml(model_name):
                             style = {'display': 'inline-block'}
                         ),
                         html.Br(),
-                        dbc.Button("Popout Figure", id = "modal-shapexp", n_clicks=0),
+                        dbc.Button("Enlarge Figure", id = "modal-shapexp", n_clicks=0),
                     ], style = {'display': 'inline-block'}),
                     
                     html.Div([
@@ -974,7 +974,7 @@ def update_explainability_ml(model_name):
                             style = {'display': 'inline-block'}
                         ),
                         html.Br(),
-                        dbc.Button("Popout Figure", id = "modal-shapsum",  n_clicks=0)
+                        dbc.Button("Enlarge Figure", id = "modal-shapsum",  n_clicks=0)
                 
                     ], style = {'display': 'inline-block'})
 
@@ -1074,7 +1074,7 @@ def create_div_exp_isn(isn_index, captum_div, model_name):
                     style={'width': '50%', 'height': '400px', 'display': 'inline-block'}
                 ),
                 html.Br(),
-                dbc.Button("Popout Figure", id="modal-expnode", n_clicks=0),
+                dbc.Button("Enlarge Figure", id="modal-expnode", n_clicks=0),
 
                 captum_div,
 
@@ -1142,13 +1142,13 @@ def update_embeddings(update=False):
                             html.Div([
                                 dcc.Graph(id='pca-plot', figure = fig_pca, config = config, style={'top': '8%', 'left': '1%', 'height': '40%', 'width': '40%', 'display': 'inline-block'}),
                                 html.Br(),
-                                dbc.Button("Popout Figure", id = "modal-pca", n_clicks=0),
+                                dbc.Button("Enlarge Figure", id = "modal-pca", n_clicks=0),
                             ], style = {'display': 'inline-block'}),
                                 
                             html.Div([
                                 dcc.Graph(id='tsne-plot', figure = fig_tsne, config = config, style={'top': '8%', 'right': '1%', 'height': '40%', 'width': '40%', 'display': 'inline-block'}),
                                 html.Br(),
-                                dbc.Button("Popout Figure", id = "modal-tsne", n_clicks=0)
+                                dbc.Button("Enlarge Figure", id = "modal-tsne", n_clicks=0)
                             ], style = {'display': 'inline-block'})
                         ], style = {'width': '100%'}),
                         
@@ -1184,13 +1184,13 @@ def update_embeddings(update=False):
                             html.Div([
                                 dcc.Graph(id='pca-plot', figure = fig_pca, config = config, style={'top': '8%', 'left': '1%', 'height': '40%', 'width': '40%', 'display': 'inline-block'}),
                                 html.Br(),
-                                dbc.Button("Popout Figure", id = "modal-pca", n_clicks=0),
+                                dbc.Button("Enlarge Figure", id = "modal-pca", n_clicks=0),
                             ], style = {'display': 'inline-block'}),
                                 
                             html.Div([
                                 dcc.Graph(id='tsne-plot', figure = fig_tsne, config = config, style={'top': '8%', 'right': '1%', 'height': '40%', 'width': '40%', 'display': 'inline-block'}),
                                 html.Br(),
-                                dbc.Button("Popout Figure", id = "modal-tsne",  n_clicks=0)
+                                dbc.Button("Enlarge Figure", id = "modal-tsne",  n_clicks=0)
                             ], style = {'display': 'inline-block'})
                         ], style = {'width': '100%'}),
                         html.Br(),
@@ -1316,7 +1316,7 @@ def update_analysis_output():
                                         config = config,
                                     ),
                                     html.Br(),
-                                    dbc.Button("Popout Figure", id = "modal-boxplot", n_clicks=0)
+                                    dbc.Button("Enlarge Figure", id = "modal-boxplot", n_clicks=0)
                                 ], style = {'display': 'inline-block'}),
                                 html.Div([
                                     # First ROC Curve
@@ -1327,7 +1327,7 @@ def update_analysis_output():
                                           # Adjust height as needed
                                     ),
                                     html.Br(),
-                                    dbc.Button("Popout Figure", id = "modal-roc", n_clicks=0)
+                                    dbc.Button("Enlarge Figure", id = "modal-roc", n_clicks=0)
                                 ], style={'display': 'inline-block'})
                             ]),
 
@@ -1340,7 +1340,7 @@ def update_analysis_output():
                                         config = config,
                                     ),
                                     html.Br(),
-                                    dbc.Button("Popout Figure", id = "modal-roctest", n_clicks=0),
+                                    dbc.Button("Enlarge Figure", id = "modal-roctest", n_clicks=0),
                                 ], style={'display': 'inline-block'}),
                                 html.Div([
                                     dcc.Graph(
@@ -1349,7 +1349,7 @@ def update_analysis_output():
                                         config = config,
                                     ),
                                     html.Br(),
-                                    dbc.Button("Popout Figure", id = "modal-confm",  n_clicks=0)
+                                    dbc.Button("Enlarge Figure", id = "modal-confm",  n_clicks=0)
                                 ], style = {'display': 'inline-block'}),
                             ]),
                             footer
@@ -1495,7 +1495,7 @@ def update_analysis_output():
                                             style={'width': '40%', 'height': '20%', 'right': '5%'}  # Adjust height as needed
                                       ),
                                       html.Br(),
-                                      dbc.Button("Popout Figure", id = "modal-roctest-gcn", n_clicks=0),
+                                      dbc.Button("Enlarge Figure", id = "modal-roctest-gcn", n_clicks=0),
                                   ], style = {'display': 'inline-block'}),
                                   html.Div([
                                       # First ROC Curve
@@ -1506,7 +1506,7 @@ def update_analysis_output():
                                         style={'height': '20%', 'width': '40%', 'left': '5%'}  # Adjust height as needed
                                       ),
                                       html.Br(),
-                                      dbc.Button("Popout Figure", id = "modal-confm-gcn", n_clicks=0)
+                                      dbc.Button("Enlarge Figure", id = "modal-confm-gcn", n_clicks=0)
                                   ], style = {'display': 'inline-block'})
 
                               ]),
@@ -1520,7 +1520,7 @@ def update_analysis_output():
                                             style={'width': '40%', 'height': '20%', 'right': '5%'}  # Adjust height as needed
                                       ),
                                       html.Br(),
-                                      dbc.Button("Popout Figure", id = "modal-roctest-gae", n_clicks=0),
+                                      dbc.Button("Enlarge Figure", id = "modal-roctest-gae", n_clicks=0),
                                   ], style = {'display': 'inline-block'}),
                                   html.Div([
                                       # First ROC Curve
@@ -1531,7 +1531,7 @@ def update_analysis_output():
                                         style={'height': '20%', 'width': '40%', 'left': '5%'}  # Adjust height as needed
                                       ),
                                       html.Br(),
-                                      dbc.Button("Popout Figure", id = "modal-confm-gae", n_clicks=0)
+                                      dbc.Button("Enlarge Figure", id = "modal-confm-gae", n_clicks=0)
                                   ], style = {'display': 'inline-block'})
 
                               ]),
@@ -1545,7 +1545,7 @@ def update_analysis_output():
                                             style={'width': '40%', 'height': '20%', 'right': '5%'}  # Adjust height as needed
                                       ),
                                       html.Br(),
-                                      dbc.Button("Popout Figure", id = "modal-roctest", n_clicks=0),
+                                      dbc.Button("Enlarge Figure", id = "modal-roctest", n_clicks=0),
                                   ], style = {'display': 'inline-block'}),
                                   html.Div([
                                       # First ROC Curve
@@ -1556,7 +1556,7 @@ def update_analysis_output():
                                         style={'height': '20%', 'width': '40%', 'left': '5%'}  # Adjust height as needed
                                       ),
                                       html.Br(),
-                                      dbc.Button("Popout Figure", id = "modal-confm", n_clicks=0)
+                                      dbc.Button("Enlarge Figure", id = "modal-confm", n_clicks=0)
                                   ], style = {'display': 'inline-block'})
 
                               ]),
@@ -1647,7 +1647,7 @@ def update_analysis_output():
                                             style={'width': '40%', 'height': '20%', 'right': '5%'}  # Adjust height as needed
                                       ),
                                       html.Br(),
-                                      dbc.Button("Popout Figure", id = "modal-roctest", n_clicks=0),
+                                      dbc.Button("Enlarge Figure", id = "modal-roctest", n_clicks=0),
                                   ], style = {'display': 'inline-block'}),
                                   html.Div([
                                       # First ROC Curve
@@ -1658,7 +1658,7 @@ def update_analysis_output():
                                         style={'height': '20%', 'width': '40%', 'left': '5%'}  # Adjust height as needed
                                       ),
                                       html.Br(),
-                                      dbc.Button("Popout Figure", id = "modal-confm", n_clicks=0)
+                                      dbc.Button("Enlarge Figure", id = "modal-confm", n_clicks=0)
                                   ], style = {'display': 'inline-block'})
 
                               ]),
