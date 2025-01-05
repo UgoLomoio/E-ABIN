@@ -1,7 +1,10 @@
 --extra-index-url https://data.pyg.org/whl/torch-2.4.0+cpu.html
+isn_tractor
 torch_scatter
 torch_sparse
 torch_cluster 
 torch_spline_conv
 torch_geometric
+captum
 pygod 
+numpy==1.24.1
