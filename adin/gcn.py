@@ -38,10 +38,10 @@ class GCN(torch.nn.Module):
 
         x = args[0]
         edge_index = args[1]
-        #print(x.shape, edge_index.shape)
+
         out, _ = self.forward(x, edge_index)
-        out = out.view(-1, 1)  # Ensure the target is in the right shape [N, 1]
-        #print(out.shape)
+        out = out.view(-1, 1)
+        print(out.shape)
         return out
 
 def test(model, data, optimizer = None):

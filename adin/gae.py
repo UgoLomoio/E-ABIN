@@ -1,32 +1,35 @@
 # -*- coding: utf-8 -*-
-"""Generative Adversarial Attributed Network Anomaly Detection (GAAN)"""
-# Author: Ruitong Zhang <rtzhang@buaa.edu.cn>, Kay Liu <zliu234@uic.edu>
+""" Graph Autoencoder
+"""
+# Author: Kay Liu <zliu234@uic.edu>
 # License: BSD 2 clause
 
-# Modified by Lomoio Ugo to enable Explainability using torch geometric GNNExplainer
+#Wrapper for GNNExplainer usage
 
-import math
-import torch
-import torch.nn.functional as F
-from torch_geometric.nn import MLP
-from torch_geometric.nn.models import GCN
-from torch_geometric.utils import to_dense_adj
-from pygod.nn.functional import double_recon_loss
 import torch
 import warnings
 import torch.nn.functional as F
-import time
-from inspect import signature
+from torch_geometric.nn import MLP
+from torch_geometric.nn.models import GCN  
 from torch_geometric.data import Data
+from torch import nn 
+import math
+from torch_geometric.utils import to_dense_adj
+from pygod.nn.decoder import DotProductDecoder
+from torch_geometric.loader import NeighborLoader
 from pygod.metric import eval_roc_auc, eval_f1, eval_average_precision, eval_recall_at_k, eval_precision_at_k
+import time 
+from pygod.utils import to_graph_score
+
+from inspect import signature
+from abc import ABC, abstractmethod
 import numpy as np
 from scipy.stats import binom
 from scipy.special import erf
 
 from torch_geometric.nn import GIN
 from torch_geometric import compile
-from torch_geometric.loader import NeighborLoader
-from pygod.utils import to_graph_score
+
 
 def logger(epoch=0,
            loss=0,
@@ -167,157 +170,38 @@ def is_fitted(detector, attributes=None):
                for attr in attributes), \
         "The detector is not fitted yet"
 
-class GAAN_Explainable(torch.nn.Module):
-    """
-    Generative Adversarial Attributed Network Anomaly Detection
 
-    GAAN is a generative adversarial attribute network anomaly
-    detection framework, including a generator module, an encoder
-    module, a discriminator module, and uses anomaly evaluation
-    measures that consider sample reconstruction error and real sample
-    recognition confidence to make predictions. This model is
-    transductive only.
-
-    See :cite:`chen2020generative` for details.
-
-    Parameters
-    ----------
-    noise_dim :  int, optional
-        Input dimension of the Gaussian random noise. Defaults: ``16``.
-    hid_dim :  int, optional
-        Hidden dimension of model. Default: ``64``.
-    num_layers : int, optional
-       Total number of layers in model. A half (floor) of the layers
-       are for the generator, the other half (ceil) of the layers are
-       for encoder. Default: ``4``.
-    dropout : float, optional
-        Dropout rate. Default: ``0.``.
-    weight_decay : float, optional
-        Weight decay (L2 penalty). Default: ``0.``.
-    act : callable activation function or None, optional
-        Activation function if not None.
-        Default: ``torch.nn.functional.relu``.
-    backbone : torch.nn.Module
-        The backbone of GAAN is fixed to be MLP. Changing of this
-        parameter will not affect the model. Default: ``None``.
-    contamination : float, optional
-        The amount of contamination of the dataset in (0., 0.5], i.e.,
-        the proportion of outliers in the dataset. Used when fitting to
-        define the threshold on the decision function. Default: ``0.1``.
-    lr : float, optional
-        Learning rate. Default: ``0.004``.
-    epoch : int, optional
-        Maximum number of training epoch. Default: ``100``.
-    device : str or torch.device, optional
-        "cuda:i" where i is the gpu Index, or "cpu" using CPU. Default: ``cpu``.
-    batch_size : int, optional
-        Minibatch size, 0 for full batch training. Default: ``0``.
-    num_neigh : int, optional
-        Number of neighbors in sampling, -1 for all neighbors.
-        Default: ``-1``.
-    weight : float, optional
-        Weight between reconstruction of node feature and structure.
-        Default: ``0.5``.
-    verbose : int, optional
-        Verbosity mode. Range in [0, 3]. Larger value for printing out
-        more log information. Default: ``0``.
-    compile_model : bool, optional
-        Whether to compile the model with ``torch_geometric.compile``.
-        Default: ``False``.
-
-    isn: bool, optional
-        Whether take in input multiple Individual Specialized Networks (ISNs) rather than one convergence/divergence network.
-        Using ISNs we aim to identify anomalous graphs (graph anomaly detection), while using convergence/divergence network is used to identify anomalous nodes in the graph (node anomaly detection). 
-        Default: ``False``.
-        
-    **kwargs
-        Other parameters for the backbone.
-
-    Attributes
-    ----------
-    decision_score_ : torch.Tensor
-        The outlier scores of the training data. Outliers tend to have
-        higher scores. This value is available once the detector is
-        fitted.
-    threshold_ : float
-        The threshold is based on ``contamination``. It is the
-        :math:`N \\times` ``contamination`` most abnormal samples in
-        ``decision_score_``. The threshold is calculated for generating
-        binary outlier labels.
-    label_ : torch.Tensor
-        The binary labels of the training data. 0 stands for inliers
-        and 1 for outliers. It is generated by applying
-        ``threshold_`` on ``decision_score_``
-    """
+class GAE_Explainable(torch.nn.Module):
 
     def __init__(self,
                  in_dim,
-                 noise_dim=16,
                  hid_dim=64,
                  num_layers=4,
                  dropout=0.,
                  weight_decay=0.,
                  act=F.relu,
-                 backbone=None,
+                 backbone=GCN,
+                 recon_s=False,
+                 sigmoid_s=False,
                  contamination=0.1,
                  lr=4e-3,
                  epoch=100,
-                 device="cpu",
+                 gan = False,
                  batch_size=0,
                  num_neigh=-1,
-                 weight=0.5,
-                 verbose=0,
+                 verbose=False,
                  compile_model=False,
-                 isn = False,
+                 device = "cpu",
                  **kwargs):
 
+        super(GAE_Explainable, self).__init__()
+        if num_neigh != 0 and backbone == MLP:
+            warnings.warn('MLP does not use neighbor information.')
+            num_neigh = 0
 
-        self.noise_dim = noise_dim
-        self.weight = weight
+        self.recon_s = recon_s
+        self.sigmoid_s = sigmoid_s
 
-        # self.num_layers is 1 for sample one hop neighbors
-        # In GAAN_Explainable, self.model_layers is for model layers
-        self.model_layers = num_layers
-
-        self.isn = isn 
-        if self.isn:
-            print("Graph Anomaly Detection task: expecting multiple ISNs")
-        else:
-            print("Node Anomaly Detection task: expecting only one convergence/divergence graph")
-            
-        if backbone is not None:
-            warnings.warn('GAAN_Explainable can only use MLP as the backbone.')
-
-        super(GAAN_Explainable, self).__init__()
-
-         # split the number of layers for the encoder and decoders
-        assert num_layers >= 2, \
-            "Number of layers must be greater than or equal to 2."
-        generator_layers = math.floor(num_layers / 2)
-        encoder_layers = math.ceil(num_layers / 2)
-
-        self.generator = MLP(in_channels=noise_dim,
-                             hidden_channels=hid_dim,
-                             out_channels=in_dim,
-                             num_layers=generator_layers,
-                             dropout=dropout,
-                             act=act).to(device)
-
-        self.encoder = GCN(in_channels=in_dim,
-                                     hidden_channels=hid_dim,
-                                     out_channels=hid_dim,
-                                     num_layers=encoder_layers,
-                                     dropout=dropout,
-                                     act=act).to(device)
-        self.emb = None
-        self.score_func = double_recon_loss
-        self.noise_dim = noise_dim
-        self.device = device
-        self.gpu = -1 if self.device == "cpu" else int(self.device[-1])
-        self.inner = self.generator
-        self.outer = self.encoder
-        self.num_layers = num_layers
-        print("GPU: {}".format(self.gpu))
         if not (0. < contamination <= 0.5):
             raise ValueError("contamination must be in (0, 0.5], "
                              "got: %f" % contamination)
@@ -326,12 +210,29 @@ class GAAN_Explainable(torch.nn.Module):
         self.verbose = verbose
         self.decision_score_ = None
 
+        
+        # model param
+        self.in_dim = None
+        self.num_nodes = None
+        self.hid_dim = hid_dim
+        self.num_layers = num_layers
+        self.dropout = dropout
         self.weight_decay = weight_decay
+        self.act = act
+        self.backbone = backbone
+        self.kwargs = kwargs
+        
+        self.emb = None 
 
+        # training param
         self.lr = lr
         self.epoch = epoch
+        self.device = device
+        self.gpu = -1 if self.device == "cpu" else int(self.device[-1])
         self.batch_size = batch_size
-        self.gan = True
+        self.gan = gan
+        self.in_dim = in_dim
+
         if type(num_neigh) is int:
             self.num_neigh = [num_neigh] * self.num_layers
         elif type(num_neigh) is list:
@@ -343,23 +244,44 @@ class GAAN_Explainable(torch.nn.Module):
         else:
             raise ValueError('Number of neighbors must be int or list of int')
 
-        # other param
-        self.model = None
+   
         self.compile_model = compile_model
 
+        self.backbone = backbone
 
-    def process_graph(self, data):
-        """
-        Obtain the dense adjacency matrix of the graph.
+        # split the number of layers for the encoder and decoders
+        assert num_layers >= 2, \
+            "Number of layers must be greater than or equal to 2."
+        encoder_layers = math.floor(num_layers / 2)
+        decoder_layers = math.ceil(num_layers / 2)
 
-        Parameters
-        ----------
-        data : torch_geometric.data.Data
-            Input graph.
-        """
-        data.s = to_dense_adj(data.edge_index)[0]
+        self.encoder = self.backbone(in_channels=in_dim,
+                                     hidden_channels=hid_dim,
+                                     out_channels=hid_dim,
+                                     num_layers=encoder_layers,
+                                     dropout=dropout,
+                                     act=act).to(self.device)#, **kwargs)
+        self.recon_s = recon_s
+        if self.recon_s:
+            self.decoder = DotProductDecoder(in_dim=hid_dim,
+                                             hid_dim=hid_dim,
+                                             num_layers=decoder_layers,
+                                             dropout=dropout,
+                                             act=act,
+                                             sigmoid_s=sigmoid_s,
+                                             backbone=self.backbone).to(self.device)#, **kwargs)
+        else:
+            self.decoder = self.backbone(in_channels=hid_dim,
+                                         hidden_channels=hid_dim,
+                                         out_channels=in_dim,
+                                         num_layers=decoder_layers,
+                                         dropout=dropout,
+                                         act=act).to(self.device)#, **kwargs)
 
-    def forward(self, x, edge_index, edge_mask=None):
+        self.loss_func = F.mse_loss
+       
+
+    def forward(self, x, edge_index, edge_mask = None):
         """
         Forward computation.
 
@@ -367,203 +289,22 @@ class GAAN_Explainable(torch.nn.Module):
         ----------
         x : torch.Tensor
             Input attribute embeddings.
+        edge_index : torch.Tensor
+            Edge index.
 
         Returns
         -------
         x_ : torch.Tensor
-            Reconstructed node features.
-        a : torch.Tensor
-            Reconstructed adjacency matrix from real samples.
-        a_ : torch.Tensor
-            Reconstructed adjacency matrix from fake samples.
+            Reconstructed embeddings.
         """
-
-        #print("base forward")
-
         
-        noise = torch.randn(x.shape[0], self.noise_dim).to(self.device)
-        x_ = self.generator(noise)
-
-        self.emb = self.encoder(x, edge_index, edge_weight = edge_mask) #z
-        z_ = self.encoder(x_, edge_index, edge_weight = edge_mask)
-
-        a = torch.sigmoid((self.emb @ self.emb.T))
-        a_ = torch.sigmoid((z_ @ z_.T))
-        #print("end base forward")
-        return x_, a, a_
-
-    @staticmethod
-    def loss_func_g(a_):
-        loss_g = F.binary_cross_entropy(a_, torch.ones_like(a_))
-        return loss_g
-
-    @staticmethod
-    def loss_func_ed(a, a_):
-        loss_r = F.binary_cross_entropy(a, torch.ones_like(a))
-        loss_f = F.binary_cross_entropy(a_, torch.zeros_like(a_))
-        return (loss_f + loss_r) / 2
-
-
-    def forward_model(self, data, edge_mask = None):
-
-        #print("model forward")
-
-
-        data.batch_size = self.batch_size
-
-        if hasattr(data, 'n_id'):
-          node_idx = data.n_id
+        if self.backbone == MLP:
+            self.emb = self.encoder(x, None)
+            x_ = self.decoder(self.emb, None)
         else:
-          node_idx = torch.arange(len(data.x))
-
-        data.n_id  = node_idx
-
-        x = data.x.to(self.device)
-
-        if hasattr(data, 's'):
-          s = data.s.to(self.device)
-        else:
-          s = to_dense_adj(data.edge_index)[0]
-          data.s = s
-
-        if edge_mask is not None:
-            edge_mask = edge_mask.to(self.device)
-        edge_index = data.edge_index.to(self.device)
-        x = data.x.to(self.device)
-
-        x_, a, a_ = self.forward(x, edge_index, edge_mask)
-
-        loss_g = self.loss_func_g(a_[edge_index])
-        loss_g.requires_grad_(True)
-        self.opt_in.zero_grad()
-        loss_g.backward()
-        self.opt_in.step()
-
-        self.epoch_loss_in += loss_g.item() * self.batch_size
-
-        loss = self.loss_func_ed(a[edge_index],
-                                       a_[edge_index].detach())
-
-        score = self.score_func(x=x[:self.batch_size],
-                                      x_=x_[:self.batch_size],
-                                      s=s[:self.batch_size, node_idx],
-                                      s_=a[:self.batch_size],
-                                      weight=self.weight,
-                                      pos_weight_s=1,
-                                      bce_s=True)
-        if self.isn:
-            score = to_graph_score(score)
-
-        return loss, score
-
-    def __call__(self, *args, **kwargs):
-        """Make the class instance callable."""
-
-        x = args[0]
-        edge_index = args[1]
-        if len(args) > 2:
-            edge_mask = args[2]
-        else:
-            edge_mask = None 
-
-        data = Data(x=x, edge_index=edge_index)
-
-        self.eval()
-        
-        pred = self.predict(data, edge_mask)
-        pred = pred.long().view(-1, 1)
-        print(pred, pred.shape)
-        return pred.detach()
-
-
-        
-    def fit(self, data, label=None):
-
-        self.process_graph(data)
-        self.num_nodes, self.in_dim = data.x.shape
-        if self.batch_size == 0:
-            self.batch_size = data.x.shape[0]
-        loader = NeighborLoader(data,
-                                self.num_neigh,
-                                batch_size=self.batch_size)
-
-        if not self.gan:
-            optimizer = torch.optim.Adam(self.parameters(),
-                                         lr=self.lr,
-                                         weight_decay=self.weight_decay)
-        else:
-            self.opt_in = torch.optim.Adam(self.inner.parameters(),
-                                           lr=self.lr,
-                                           weight_decay=self.weight_decay)
-            optimizer = torch.optim.Adam(self.outer.parameters(),
-                                         lr=self.lr,
-                                         weight_decay=self.weight_decay)
-
-        self.train()
-        self.decision_score_ = torch.zeros(data.x.shape[0]).to(self.device)
-        for epoch in range(self.epoch):
-            start_time = time.time()
-            epoch_loss = 0
-            if self.gan:
-                self.epoch_loss_in = 0
-            for sampled_data in loader:
-                batch_size = sampled_data.batch_size
-                node_idx = sampled_data.n_id
-
-                loss, score = self.forward_model(sampled_data)
-                epoch_loss += loss.item() * batch_size
-
-                self.decision_score_[node_idx[:batch_size]] = score
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-            loss_value = epoch_loss / data.x.shape[0]
-            if self.gan:
-                loss_value = (self.epoch_loss_in / data.x.shape[0], loss_value)
-            logger(epoch=epoch,
-                   loss=loss_value,
-                   score=self.decision_score_,
-                   target=label,
-                   time=time.time() - start_time,
-                   verbose=self.verbose,
-                   train=True)
-
-        self._process_decision_score()
-        return self
-
-    def decision_function(self, data, edge_mask = None, label=None):
-
-        self.process_graph(data)
-        loader = NeighborLoader(data,
-                                self.num_neigh,
-                                batch_size=self.batch_size)
-
-        self.eval()
-        outlier_score = torch.zeros(data.x.shape[0]).to(self.device)
-      
-        start_time = time.time()
-        test_loss = 0
-        for sampled_data in loader:
-            loss, score = self.forward_model(sampled_data, edge_mask)
-            batch_size = sampled_data.batch_size
-            node_idx = sampled_data.n_id
-
-            test_loss = loss.item() * batch_size
-            outlier_score[node_idx[:batch_size]] = score
-
-        loss_value = test_loss / data.x.shape[0]
-        if self.gan:
-            loss_value = (self.epoch_loss_in / data.x.shape[0], loss_value)
-
-        logger(loss=loss_value,
-               score=outlier_score,
-               target=label,
-               time=time.time() - start_time,
-               verbose=self.verbose,
-               train=False)
-        return outlier_score
+            self.emb = self.encoder(x, edge_index, edge_weight = edge_mask)
+            x_ = self.decoder(self.emb, edge_index, edge_weight = edge_mask)
+        return x_
 
     def predict(self,
                 data=None,
@@ -572,8 +313,9 @@ class GAAN_Explainable(torch.nn.Module):
                 return_score=False,
                 return_prob=False,
                 prob_method='linear',
-                return_conf=False,
-                edge_mask = None):
+                return_conf=False, 
+                edge_mask = None
+                ):
         """Prediction for testing data using the fitted detector.
         Return predicted labels by default.
 
@@ -657,7 +399,127 @@ class GAAN_Explainable(torch.nn.Module):
         else:
             return output
 
+    def process_graph(self, data, recon_s=False):
+        """
+        Obtain the dense adjacency matrix of the graph.
 
+        Parameters
+        ----------
+        data : torch_geometric.data.Data
+            Input graph.
+        recon_s : bool, optional
+            Reconstruct the structure instead of node feature .
+        """
+        if recon_s:
+            data.s = to_dense_adj(data.edge_index)[0]
+
+    def forward_model(self, data, edge_mask = None):
+
+        data.batch_size = self.batch_size
+
+        if hasattr(data, 'n_id'):
+          node_idx = data.n_id
+        else:
+          node_idx = torch.arange(len(data.x))
+
+        data.n_id  = node_idx
+
+        x = data.x.to(self.device)
+        edge_index = data.edge_index.to(self.device)
+        if edge_mask is not None:
+            edge_mask = edge_mask.to(self.device)
+
+        if self.recon_s:
+            s = data.s.to(self.device)[:, node_idx]
+
+        h = self.forward(x, edge_index, edge_mask)
+
+        target = s if self.recon_s else x
+        score = torch.mean(self.loss_func(target[:self.batch_size],
+                                                h[:self.batch_size],
+                                                reduction='none'), dim=1)
+        loss = torch.mean(score)
+
+        return loss, score#.detach().cpu()
+    
+        
+    def fit(self, data, label=None):
+
+        self.process_graph(data)
+        self.num_nodes, self.in_dim = data.x.shape
+        if self.batch_size == 0:
+            self.batch_size = data.x.shape[0]
+        loader = NeighborLoader(data,
+                                self.num_neigh,
+                                batch_size=self.batch_size)
+
+        if not self.gan:
+            optimizer = torch.optim.Adam(self.parameters(),
+                                         lr=self.lr,
+                                         weight_decay=self.weight_decay)
+        else:
+            self.opt_in = torch.optim.Adam(self.inner.parameters(),
+                                           lr=self.lr,
+                                           weight_decay=self.weight_decay)
+            optimizer = torch.optim.Adam(self.outer.parameters(),
+                                         lr=self.lr,
+                                         weight_decay=self.weight_decay)
+
+        self.train()
+        self.decision_score_ = torch.zeros(data.x.shape[0]).to(self.device)
+        for epoch in range(self.epoch):
+            start_time = time.time()
+            epoch_loss = 0
+            if self.gan:
+                self.epoch_loss_in = 0
+            for sampled_data in loader:
+                batch_size = sampled_data.batch_size
+                node_idx = sampled_data.n_id
+
+                loss, score = self.forward_model(sampled_data)
+                epoch_loss += loss.item() * batch_size
+
+                self.decision_score_[node_idx[:batch_size]] = score
+
+                optimizer.zero_grad()
+                loss.backward(retain_graph=True)
+                optimizer.step()
+
+            loss_value = epoch_loss / data.x.shape[0]
+            if self.gan:
+                loss_value = (self.epoch_loss_in / data.x.shape[0], loss_value)
+            logger(epoch=epoch,
+                   loss=loss_value,
+                   score=self.decision_score_,
+                   target=label,
+                   time=time.time() - start_time,
+                   verbose=self.verbose,
+                   train=True)
+
+        self._process_decision_score()
+        return self
+
+    def __call__(self, *args, **kwargs):
+        """Make the class instance callable."""
+
+        x = args[0].to(self.device)
+        edge_index = args[1].to(self.device)
+        if len(args) > 2:
+            edge_mask = args[2].to(self.device)
+        else:
+            edge_mask = None 
+
+        data = Data(x=x, edge_index=edge_index)
+
+        self.eval()
+        pred, probs = self.predict(data, edge_mask, return_prob=True)
+        pred = torch.stack([torch.tensor([1, 0]) if p.item() == 0 else torch.tensor([0, 1]) for p in pred]).view(-1, 1).to(self.device)
+        # Stack the probabilities and ensure gradients propagate
+        #probs = torch.stack([1 - probs, probs], dim=1).view(-1, 1).to(self.device)
+        print(pred.shape, pred)
+        return pred
+
+    
 
     def _predict_prob(self, score, method='linear'):
         """Predict the probabilities of being outliers. Two approaches
@@ -741,6 +603,38 @@ class GAAN_Explainable(torch.nn.Module):
         self.threshold_ = torch.quantile(self.decision_score_,
                                         (1 - self.contamination))
         self.label_ = (self.decision_score_ > self.threshold_).long()
+
+    def decision_function(self, data, edge_mask = None, label=None):
+
+        self.process_graph(data)
+        loader = NeighborLoader(data,
+                                self.num_neigh,
+                                batch_size=self.batch_size)
+
+        self.eval()
+        outlier_score = torch.zeros(data.x.shape[0]).to(self.device)
+
+        start_time = time.time()
+        test_loss = 0
+        for sampled_data in loader:
+            loss, score = self.forward_model(sampled_data, edge_mask)
+            batch_size = sampled_data.batch_size
+            node_idx = sampled_data.n_id
+
+            test_loss = loss.item() * batch_size
+            outlier_score[node_idx[:batch_size]] = score
+
+        loss_value = test_loss / data.x.shape[0]
+        if self.gan:
+            loss_value = (self.epoch_loss_in / data.x.shape[0], loss_value)
+
+        logger(loss=loss_value,
+               score=outlier_score,
+               target=label,
+               time=time.time() - start_time,
+               verbose=self.verbose,
+               train=False)
+        return outlier_score
 
     def __repr__(self):
 

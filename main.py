@@ -1,7 +1,7 @@
 """
 ***************************************************************************************************************************************************************
 *                                                                                                                                                             *
-*   ADIN: A Python based GUI for anomaly detection and binary classification of gene expression microarray data using explainable machine learning and GAANs  *
+*   ADIN: A Python based GUI for anomaly detection and binary classification of gene expression data using explainable machine and deep learning              *
 *   Developed by Lomoio Ugo                                                                                                                                   *  
 *   2024                                                                                                                                                      *
 *                                                                                                                                                             *
@@ -26,16 +26,11 @@ import pandas as pd
 from dash.dash_table import DataTable
 import io 
 import base64
-
 #import multiprocessing
 
-from plotly.graph_objs.layout import annotation
 from sklearn.metrics import confusion_matrix
-from torch.cuda import is_available
-from torch.utils.data import dataloader
 from adin import utils, ml, dl, preprocessing, gaan_config, ml_config, gcn, gaan, captum_explainations 
-from pygod.detector import GAE
-import plotly.graph_objects as go
+from adin.gae import GAE_Explainable
 from dash import html, dcc
 import torch
 from collections import deque
@@ -98,10 +93,9 @@ map_final = {0: "Normal", 1: "Anomalous"}
 gaan_params = None 
 ml_params = None 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-
 isns = None 
 explainers = {}
-
+genes_isn = None 
 
 analysis_options = {
     'ML': ['KNN', 'LR', 'DT', 'SVM', 'RF'], #['LDA', 'NB', 'KNN', 'LR', 'DT', 'SVM', 'RF']
@@ -365,7 +359,7 @@ footer = html.Footer([
                 #html.P("Anonymized Footer for peer-review"), 
 
                 html.Div([
-                    html.Img(src='/assets/unicz.png', style = {'width': '100%', 'height': 'auto'}),
+                    html.Img(src='/assets/unicz.png', style = {'width': '100%', 'height': '100px'}),
                 ], style = {
                     'width': '12%',  # Adjust the width of the image container
                     'display': 'inline-block',
@@ -384,7 +378,7 @@ footer = html.Footer([
                     }
                 ),
                 html.Div([
-                    html.Img(src='/assets/unical.png', style = {'width': '100%', 'height': 'auto'}),  
+                    html.Img(src='/assets/unical.png', style = {'width': '100%', 'height': '100px'}),  
                     ], style = {
                         'width': '18%',  # Adjust the width of the image container
                         'display': 'inline-block',
@@ -393,7 +387,7 @@ footer = html.Footer([
                     }
                 ),
             ], style = {'width': '100%',  # Ensure the row occupies full width
-                        'height': '10%',
+                        'height': '100px',
                         'textAlign': 'center',
                         'background-color': '#EBEBEB'})
         ])
@@ -786,7 +780,7 @@ def create_div_captum(model_name):
     global edge_list 
 
     if model_name in models.keys():
-        if model_name != "GCN":
+        if model_name not in ["GCN"]:
             div = html.Div([html.P("Captum explainations are not available for {}.".format(model_name), style={'color': 'red', 'fontWeight': 'bold'})])
             return div
         else:
@@ -812,10 +806,11 @@ def create_div_exp(captum_div, model_name):
     global mydataloader 
     global patients 
     global edge_list
-
-    if model_name == "GAE":
+    global nodes 
+    global edges 
+    if model_name in [""]:
         return html.Div(html.P(
-            "Explanations are not available for GAE models.",
+            "Explanations are not available for {} models.".format(model_name),
             style={'color': 'red', 'fontWeight': 'bold'}
         ))
     else:
@@ -824,7 +819,8 @@ def create_div_exp(captum_div, model_name):
         if model_name == "GCN":
             preds = gcn.test(model, mydataloader)
         else:
-            preds = model.predict(mydataloader)
+            preds = model(mydataloader.x, mydataloader.edge_index)
+
         nodes, edges = dl.compute_elements_cyto(patients, edge_list, None, y.cpu(), preds.cpu(), isn = False)
         return  html.Div([
                 
@@ -1006,22 +1002,38 @@ def create_div_exp_isn(isn_index, captum_div, model_name):
     global isns 
     global mydataloader
     global edge_list 
-
+    global nodes 
+    global edges 
+    global explainers 
+    global genes_isn
+    global node_mapping 
+    global expr 
+    global saved_figures
+   
     isn = isns[isn_index]
     model = models[model_name]
     y = mydataloader.y
     preds = model.predict(mydataloader)
 
-    genes = []
+    genes_isn = []
     for edge in edge_list:
         node1, node2 = edge.split("_")
-        if node1 not in genes:
-            genes.append(node1)
-        if node2 not in genes:
-            genes.append(node2)
+        if node1 not in genes_isn:
+            genes_isn.append(node1)
+        if node2 not in genes_isn:
+            genes_isn.append(node2)
+    print(len(genes_isn))
 
-    nodes, edges = dl.compute_elements_cyto(genes, edge_list, None, y.cpu(), preds.cpu(), isn = True)
+    target = y[isn_index].item()
+    y = torch.tensor([target for i in range(len(genes_isn))])
+    pred = preds[isn_index].item()
+    preds = torch.tensor([pred for i in range(len(genes_isn))])
+    nodes, edges = dl.compute_elements_cyto(genes_isn, edge_list, None, y, preds, isn = True)
     
+    #explainer = explainers[model_name]
+    #fig = dl.plotly_featureimportance_from_gnnexplainer(explainer, mydataloader, isn_index, genes_isn)
+    #saved_figures['expnode'] = fig
+
     return html.Div([
                 html.Br(),
                 html.Br(),
@@ -1068,15 +1080,6 @@ def create_div_exp_isn(isn_index, captum_div, model_name):
                         html.Pre(id='cytoscape-tapEdgeData-json', children="Click one edge to visualize its information", style=styles['pre']),
                     ]),
                 ]),
-
-                dcc.Graph(
-                    id='exp-node',
-                    style={'width': '50%', 'height': '400px', 'display': 'inline-block'}
-                ),
-                html.Br(),
-                dbc.Button("Enlarge Figure", id="modal-expnode", n_clicks=0),
-
-                captum_div,
 
                 html.P("Subgraph:"),
                 cyto.Cytoscape(
@@ -1242,7 +1245,6 @@ def update_analysis_output():
     global ml_params 
     global gaan_params 
     global isns 
-    
         
     if method_g == 'ML':
             
@@ -1378,7 +1380,6 @@ def update_analysis_output():
         dataloader_train, dataloader_test = dl.train_test_split_and_mask(mydataloader, node_mapping_rev, train_size = 0.6)
         in_dim = dataloader_train.x.shape[1]
 
-
         uqs, counts = np.unique(y, return_counts = True)
         dict_counts = {}
         for uq, count in zip(uqs, counts):
@@ -1408,23 +1409,24 @@ def update_analysis_output():
         fig_roc_test = ml.plot_roc_curve_(y_test, preds)
         saved_figures["confm"] = fig_cm 
         saved_figures["roc-test"] = fig_roc_test 
-        explainer = Explainer(
-            model=model,
-            algorithm=GNNExplainer(epochs=100, lr = 0.001),
-            explanation_type='model',
-            node_mask_type='attributes',
-            edge_mask_type='object',
-            model_config=dict(
-                mode='binary_classification',
-                task_level='node',
-                return_type='raw',
-            ),
+        explainer =  Explainer(
+                model=model,
+                algorithm=GNNExplainer(epochs=0, lr = 0.001),
+                explanation_type='model',
+                node_mask_type='attributes',
+                edge_mask_type='object',
+                model_config=dict(
+                    mode='binary_classification',
+                    task_level='node',
+                    return_type='probs'
+                ),
         )
         models["GAAN_node"] = model
         explainers["GAAN_node"] = explainer
 
         gpu = 0 if torch.cuda.is_available() else -1
-        model_gae = GAE(gpu = gpu, hid_dim=gaan_params.hid_dim, num_layers=gaan_params.num_layers, dropout=gaan_params.dropout, contamination=gaan_params.contamination, lr=gaan_params.lr, epoch=gaan_params.epoch, batch_size=gaan_params.batch_size, verbose=gaan_params.verbose)
+       
+        model_gae = GAE_Explainable(in_dim, device = device, hid_dim=gaan_params.hid_dim, num_layers=gaan_params.num_layers, dropout=gaan_params.dropout, contamination=gaan_params.contamination, lr=gaan_params.lr, epoch=gaan_params.epoch, batch_size=gaan_params.batch_size, verbose=gaan_params.verbose)
         model_gae.fit(dataloader_train)
         models["GAE"] = model_gae
         preds = model.predict(dataloader_test).cpu()
@@ -1433,17 +1435,29 @@ def update_analysis_output():
         fig_roc_test = ml.plot_roc_curve_(y_test, preds)
         saved_figures["confm-gae"] = fig_cm 
         saved_figures["roc-test-gae"] = fig_roc_test 
-        explainer = None
-        models["GAE"] = model
+        explainer = Explainer(
+                model=model_gae,
+                algorithm=GNNExplainer(epochs=0, lr = 0.001),
+                explanation_type='model',
+                node_mask_type='attributes',
+                edge_mask_type='object',
+                model_config=dict(
+                    mode='binary_classification',
+                    task_level='node',
+                    return_type='raw'
+                ),
+        )
+        models["GAE"] = model_gae
         explainers["GAE"] = explainer
+       
 
-        lr = 0.0001
+        lr = gaan_params.lr
         hidden_dims = [32]
         inchannels = mydataloader.x.shape[1]
         model_gcn = gcn.GCN(inchannels, hidden_dims=hidden_dims).to(device)
         criterion = torch.nn.CrossEntropyLoss()  # Define loss criterion.
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)  # Define optimizer.
-        for epoch in range(1000):
+        for epoch in range(gaan_params.epoch):
             if epoch%100 == 0:
                 print("Training GCN, epoch {}".format(epoch))
             loss = gcn.train(model_gcn, optimizer, criterion, dataloader_train)
@@ -1463,11 +1477,10 @@ def update_analysis_output():
                 model_config=dict(
                     mode='binary_classification',
                     task_level='node',
-                    return_type='raw',
+                    return_type='raw'
                 ),
         )
         explainers["GCN"] = explainer   
-
 
         df_result = dl.create_results_df(models, dataloader_test)
         columns = [{'name': col, 'id': col} for col in df_result.columns]
@@ -1568,9 +1581,12 @@ def update_analysis_output():
 
         print("Creating ISNs from gene expression arrays")
         
-        isns, interaction_df = utils.create_sparse_isns(expr)
-        isns = torch.stack(isns).to(device)
-        isns = isns.T
+        if isns is None:
+            isns, interaction_df = utils.create_sparse_isns(expr)
+            isns = torch.stack(isns).to(device)
+            print(isns)
+            isns = isns.T
+        
         edge_list = [row["feature_1"]+"_"+row["feature_2"] for index, row in interaction_df.iterrows()]
 
         # Parse the edges and create node mapping
@@ -1613,7 +1629,8 @@ def update_analysis_output():
         df_result = dl.create_results_df({"GAAN_isn": model}, dataloader_test)
         
         preds = model.predict(dataloader_test).cpu()
-        
+        explainer = None
+        explainers["GAAN_isn"] = explainer   
         y_test = dataloader_test.y.cpu()
         classes = {0: "Normal", 1: "Anomalous"}
         cm = confusion_matrix(y_test, preds)
@@ -1624,6 +1641,8 @@ def update_analysis_output():
         
         columns = [{'name': col, 'id': col} for col in df_result.columns]
         data = df_result.to_dict(orient='records')
+
+
         return  html.Div([
                               html.Br(),
                               html.Br(),
@@ -1711,7 +1730,7 @@ def update_layout(pathname, n_clicks):
     global genes 
     global gaan_params
     global ml_params 
-
+    global genes_isn
     # Debugging print statements
     
     print(f"Callback triggered with pathname: {pathname}")
@@ -1807,7 +1826,7 @@ def update_layout(pathname, n_clicks):
                 'GAAN (node)': ['GAAN_node', 'GCN', 'GAE'],
                 'GAAN (ISNs)': ['GAAN_isn']
             }
-
+            genes_isn = None 
             
             download_button_style = {'position': 'absolute', 'top': '30%', 'right': '5%', 'width': '10%',
                             'background-color': '#34B212', 'height': '8%', 'text-align': 'center', 'display':'none'}
@@ -2487,16 +2506,17 @@ def updateExpOnTapNode(node_data):
     global explainers 
     global expr 
     global saved_figures
+    global model_name
 
-    if node_data:
-
-        node = node_data["id"]
-        id = node_mapping[node]
-        genes = expr.columns
-        explainer = explainers[model_name]
-        fig = dl.plotly_featureimportance_from_gnnexplainer(explainer, mydataloader, id, genes)
-        saved_figures['expnode'] = fig
-        return fig
+    if "isn" not in model_name:
+        if node_data:
+            node = node_data["id"]
+            id = node_mapping[node]
+            genes = expr.columns
+            explainer = explainers[model_name]
+            fig = dl.plotly_featureimportance_from_gnnexplainer(explainer, mydataloader, id, genes)
+            saved_figures['expnode'] = fig
+            return fig
 
 @app.callback(
           Output('subnetwork', 'elements'),

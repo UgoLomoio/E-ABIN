@@ -12,29 +12,25 @@ if platform.system() == "linux":
 import pandas as pd 
 import gzip
 import shutil
-import os
 import statsmodels.api as sm
 from statsmodels.stats.multitest import multipletests
-#import seaborn as sns
-import itertools
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 from scipy.spatial.distance import pdist, squareform
-import plotly 
 from plotly import graph_objects as go
 import GEOparse
 from torch.nn.functional import cosine_similarity
 from isn_tractor import ibisn as it
-import isn_tractor as isn
 import gc 
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-def create_sparse_isns(expr): 
+def create_sparse_isns(expr, th = 0.4): 
 
     genes = expr.columns
     values = expr.values
-    interaction_df = create_interaction_df(values, genes)
+    interaction_df = create_interaction_df(values, genes, th = th)
+    print("Interaction mapped: ", interaction_df.shape)
     isn_generator = it.sparse_isn(expr, None, interaction_df, "pearson", "average", device)
     
     isns = []
@@ -178,7 +174,7 @@ def get_targets(dataframe):
         elif "normal" in label.lower():
             y = "control"
         else: 
-            y = "cancer"
+            y = "anomalous"
         ys.append(y)
         patients.append(patient)
         map_ys[patient] = y
@@ -650,7 +646,7 @@ def validate_model(y_trues, y_preds, model_name):
 
 def compress_expr(expr, ys):
    
-    labels = {0: "Healthy Control", 1: "Cancer"}
+    labels = {0: "Healthy Control", 1: "Anomalous"}
 
     uqs, counts = np.unique(ys, return_counts=True)
 

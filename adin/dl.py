@@ -241,6 +241,7 @@ def plotly_featureimportance_from_gnnexplainer(explainer, data, node_id, genes, 
     
     importances = node_mask.sum(dim=0).cpu().detach().numpy()
 
+    print(len(genes), importances.shape)
     # Create a DataFrame for gene importances
     feature_importances = pd.DataFrame({
         'Gene': genes,

@@ -48,12 +48,21 @@ def draw_network(g, y, edge_mask=None):
     plt.show()
 
 def model_forward(edge_mask, data):
-    out, h = model.forward(data.x, data.edge_index, edge_mask)
+    global model_name 
+    global model 
+    global device
+
+    if model_name in ["GAAN_node"]:
+        out = model.predict(data, edge_mask)
+    else:
+        out, h = model.forward(data.x, data.edge_index, edge_mask)
+    print(out, out.shape, out.requires_grad, out.grad_fn)
     return out
 
 
 def explain(method, data, target=0):
     input_mask = torch.ones(data.edge_index.shape[1]).requires_grad_(True).to(device)
+
     if method == 'ig':
         ig = IntegratedGradients(model_forward)
         mask = ig.attribute(input_mask, target=target,
@@ -90,7 +99,7 @@ def explain_with_captum(model_in, modelname_in, data, G, target = 1):
 
     model = model_in
     model_name = modelname_in
-    if model_name == "GCN":
+    if model_name in ["GCN", "GAAN_node"]:
         # Define the colormap
         colors = [(0, 1, 0), (1, 0, 0)]  # Green to Red
         cmap = LinearSegmentedColormap.from_list("GreenRed", colors)
