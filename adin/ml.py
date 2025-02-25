@@ -53,7 +53,7 @@ def plot_roc_curve_(y, y_pred):
     """
     y = np.array(y)       # cast array-like into numpy array
     y_pred = np.array(y_pred)
-    
+    print("AAAA", y.shape, y_pred.shape)
     # Scale the values between 0 and 1
     y = MinMaxScaler(feature_range=(0, 1)).fit_transform(y.reshape(-1, 1))
     y_pred = MinMaxScaler(feature_range=(0, 1)).fit_transform(y_pred.reshape(-1, 1))

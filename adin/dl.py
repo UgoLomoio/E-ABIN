@@ -17,11 +17,12 @@ import numpy as np
 import plotly.express as px 
 from .gaan import GAAN_Explainable
 
+
 scores = {"ROC AUC": eval_roc_auc, "F1": eval_f1, "Average Precision": eval_average_precision, "Recall@k": eval_recall_at_k, "Precision@k": eval_precision_at_k}
 
-epoch = 100
+epoch = 200
 verbose = 1
-dropout = 0.2
+dropout = 0.3
 if torch.cuda.is_available():
     device = "cuda:0"
 elif torch.backends.mps.is_available():
@@ -29,12 +30,12 @@ elif torch.backends.mps.is_available():
 else:
     device = "cpu"
 gpu = -1 if device == "cpu" else 0 #-1 cpu
-num_layers = 7
-learning_rate = 0.005
-batch_size = 2
-h_dim = 64
-noise_dim = 64#16
-contamination = 0.005
+num_layers = 2
+learning_rate = 0.00005
+batch_size = 1
+h_dim = 128
+noise_dim = 64
+contamination = 0.05
 verbose = 1 
 detectors = {}
 isn = False 
@@ -108,7 +109,6 @@ def create_torch_geo_data(x, y, edge_index, edge_weights=None):
     else:
         return Data(x=x, edge_index = edge_index, y = y)
 
-
 def train_gaan(model, train_data):
     
     global detectors 
@@ -146,11 +146,11 @@ def create_results_df(detectors, test_data):
             continue #ML detector
         y_test = y_test.clone().cpu().detach().numpy()
         pred = pred.clone().cpu().detach().numpy()
-        acc = accuracy_score(y_test, pred)
+        acc = accuracy_score(y_test, pred)*100
         f1 = f1_score(y_test, pred)
-        specificity = recall_score(y_test, pred, pos_label=0)
-        sensitivity = recall_score(y_test, pred)
-        precision =  precision_score(y_test, pred)
+        specificity = recall_score(y_test, pred, pos_label=0)*100
+        sensitivity = recall_score(y_test, pred)*100
+        precision =  precision_score(y_test, pred)*100
         aucs = roc_auc_score(y_test, pred)
         auc = np.mean(aucs)
         df.loc[i] = [detector_name, acc, f1, sensitivity, specificity, auc, precision]

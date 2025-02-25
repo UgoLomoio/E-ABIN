@@ -96,6 +96,8 @@ device = "cuda:0" if torch.cuda.is_available() else "cpu"
 isns = None 
 explainers = {}
 genes_isn = None 
+interaction_df = None 
+contamination = None 
 
 analysis_options = {
     'ML': ['KNN', 'LR', 'DT', 'SVM', 'RF'], #['LDA', 'NB', 'KNN', 'LR', 'DT', 'SVM', 'RF']
@@ -118,6 +120,9 @@ reset_button = dbc.Button(
     n_clicks=0
 )
 
+gpu = 0 if torch.cuda.is_available() else -1
+n_gpus = torch.cuda.device_count() - 1
+
 gaan_params_layout = html.Div([
 
     # Header
@@ -125,47 +130,47 @@ gaan_params_layout = html.Div([
 
     # Input for noise_dim (int)
     html.Label("Noise Dimension (noise_dim):"),
-    dcc.Input(id='noise_dim', type='number', value=16, min=1, step=1),
+    dcc.Input(id='noise_dim', type='number', value=64, min=1, step=1),
     html.Br(),
 
     # Input for hid_dim (int)
     html.Label("Hidden Dimension (hid_dim):"),
-    dcc.Input(id='hid_dim', type='number', value=64, min=1, step=1),
+    dcc.Input(id='hid_dim', type='number', value=128, min=1, step=1),
     html.Br(),
 
     # Input for num_layers (int)
     html.Label("Number of Layers (num_layers):"),
-    dcc.Input(id='num_layers', type='number', value=4, min=1, step=1),
+    dcc.Input(id='num_layers', type='number', value=2, min=2, step=1),
     html.Br(),
 
     # Input for dropout (float)
     html.Label("Dropout Rate (dropout):"),
-    dcc.Input(id='dropout', type='number', value=0.1, min=0, max=1, step=0.01),
+    dcc.Input(id='dropout', type='number', value=0.3, min=0.0, max=1.0, step=0.01),
     html.Br(),
 
     # Input for contamination (float)
     html.Label("Contamination (contamination):"),
-    dcc.Input(id='contamination', type='number', value=0.05, min=0.0, max=0.5, step=0.01),
+    dcc.Input(id='contamination', type='number', value=contamination, min=0.0, max=0.5, step=0.01),
     html.Br(),
 
     # Input for learning rate (lr)
     html.Label("Learning Rate (lr):"),
-    dcc.Input(id='lr', type='number', value=0.004, step=0.0001),
+    dcc.Input(id='lr', type='number', value=0.00005, min= 0.0000001, max = 0.5, step=0.00001),
     html.Br(),
 
     # Input for epoch (int)
     html.Label("Number of Epochs (epoch):"),
-    dcc.Input(id='epoch', type='number', value=100, min=1, step=1),
+    dcc.Input(id='epoch', type='number', value=200, min=1, step=1),
     html.Br(),
 
     # Input for GPU index (gpu)
     html.Label("GPU Index (gpu):"),
-    dcc.Input(id='gpu', type='number', value=-1, min=-1, step=1),
+    dcc.Input(id='gpu', type='number', value=gpu, min=-1, max=n_gpus, step=1),
     html.Br(),
 
     # Input for batch_size (int)
     html.Label("Batch Size (batch_size):"),
-    dcc.Input(id='batch_size', type='number', value=2, min=2, step=1),
+    dcc.Input(id='batch_size', type='number', value=1, min=1, step=1),
     html.Br(),
 
     # Slider for verbosity (verbose)
@@ -1245,7 +1250,9 @@ def update_analysis_output():
     global ml_params 
     global gaan_params 
     global isns 
-        
+    global interaction_df
+    global contamination 
+
     if method_g == 'ML':
             
         if fig_box is None or fig_roc is None or fig_roc_test is None:
@@ -1385,15 +1392,18 @@ def update_analysis_output():
         for uq, count in zip(uqs, counts):
             dict_counts[uq.item()] = count.item()
         contamination = (dict_counts[1]/(dict_counts[0] + dict_counts[1]))*0.5
-
+        #print(contamination)
         if gaan_params is not None:
             if gaan_params.contamination is None:
                 gaan_params.contamination = contamination
             gaan_params.isn = False 
         else:
             gpu = 0 if torch.cuda.is_available() else -1
-            gaan_params = gaan_config.GAAN_config(noise_dim=16, hid_dim=64, num_layers=2, dropout=0.3, contamination=contamination, lr = 0.00005, epoch = 200, gpu = gpu, batch_size=512, verbose = 1, isn = False)
+            gaan_params = gaan_config.GAAN_config(noise_dim=64, hid_dim=128, num_layers=2, dropout=0.3, contamination=contamination, lr = 0.00005, epoch = 200, gpu = gpu, batch_size=1, verbose = 1, isn = False)
         
+        attrs = vars(gaan_params)
+        print(', '.join("%s: %s" % item for item in attrs.items()))
+
         print("Create GAAN model")
         model = dl.create_model(in_dim, gaan_params, isn = False)
         model = dl.train_gaan(model, dataloader_train)
@@ -1402,7 +1412,7 @@ def update_analysis_output():
             del models["Temp"]
 
         preds = model.predict(dataloader_test).cpu()
-        y_test = dataloader_test.y.cpu()
+        y_test = dataloader_test.y.cpu().squeeze(-1)
         classes = {0: "Normal", 1: "Anomalous"}
         cm = confusion_matrix(y_test, preds)
         fig_cm = dl.plot_cm(classes, cm, "GAAN_node")
@@ -1426,7 +1436,7 @@ def update_analysis_output():
 
         gpu = 0 if torch.cuda.is_available() else -1
        
-        model_gae = GAE_Explainable(in_dim, device = device, hid_dim=gaan_params.hid_dim, num_layers=gaan_params.num_layers, dropout=gaan_params.dropout, contamination=gaan_params.contamination, lr=gaan_params.lr, epoch=gaan_params.epoch, batch_size=gaan_params.batch_size, verbose=gaan_params.verbose)
+        model_gae = GAE_Explainable(in_dim, device = device, hid_dim=gaan_params.hid_dim, num_layers=gaan_params.num_layers, dropout=gaan_params.dropout, contamination=gaan_params.contamination, lr=gaan_params.lr, epoch=gaan_params.epoch, verbose=gaan_params.verbose) #batch_size=gaan_params.batch_size
         model_gae.fit(dataloader_train)
         models["GAE"] = model_gae
         preds = model.predict(dataloader_test).cpu()
@@ -1452,12 +1462,12 @@ def update_analysis_output():
        
 
         lr = gaan_params.lr
-        hidden_dims = [32]
+        hidden_dims = [128]
         inchannels = mydataloader.x.shape[1]
         model_gcn = gcn.GCN(inchannels, hidden_dims=hidden_dims).to(device)
         criterion = torch.nn.CrossEntropyLoss()  # Define loss criterion.
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)  # Define optimizer.
-        for epoch in range(gaan_params.epoch):
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)  # Define optimizer.
+        for epoch in range(2000):
             if epoch%100 == 0:
                 print("Training GCN, epoch {}".format(epoch))
             loss = gcn.train(model_gcn, optimizer, criterion, dataloader_train)
@@ -1611,7 +1621,7 @@ def update_analysis_output():
             gaan_params.isn = True 
         else:
             gpu = 0 if torch.cuda.is_available() else -1
-            gaan_params = gaan_config.GAAN_config(noise_dim=16, hid_dim=4, num_layers=4, dropout=0.3, contamination=contamination, lr = 0.0005, epoch = 400, gpu = gpu, batch_size=64, verbose = 1, isn = True)
+            gaan_params = gaan_config.GAAN_config(noise_dim=64, hid_dim=128, num_layers=2, dropout=0.3, contamination=contamination, lr = 0.00005, epoch = 200, gpu = gpu, batch_size=1, verbose = 1, isn = True)
 
         mydataloader = dl.create_torch_geo_data(x, y, edge_index)
         node_mapping_rev = {value: key for key, value in node_mapping.items()}
@@ -1731,6 +1741,8 @@ def update_layout(pathname, n_clicks):
     global gaan_params
     global ml_params 
     global genes_isn
+    global interaction_df
+    global contamination
     # Debugging print statements
     
     print(f"Callback triggered with pathname: {pathname}")
@@ -1788,6 +1800,7 @@ def update_layout(pathname, n_clicks):
         if n_clicks > 0:
             #reset all global parameters
             # Global variables to hold the data
+            interaction_df = None
             gene_data = None
             expr = None 
             edge_index = None
@@ -1821,6 +1834,7 @@ def update_layout(pathname, n_clicks):
             explainers = {} 
             node_mapping = None 
             isns = None 
+            contamination = None
             analysis_options = {
                 'ML': ['KNN', 'LR', 'DT', 'SVM', 'RF'], #['LDA', 'NB', 'KNN', 'LR', 'DT', 'SVM', 'RF']
                 'GAAN (node)': ['GAAN_node', 'GCN', 'GAE'],

@@ -3,7 +3,7 @@ from torch import nn
 class GAAN_config:
     """A class used for GAAN model configs."""
 
-    def __init__(self, noise_dim=16, hid_dim=64, num_layers=4, dropout=0.0, act=nn.ReLU, backbone=None, contamination=None, lr=0.004, epoch=100, gpu=-1, batch_size=0, verbose=0, isn = False ):
+    def __init__(self, noise_dim=16, hid_dim=64, num_layers=2, dropout=0.3, act=nn.ReLU, backbone=None, contamination=None, lr=0.00005, epoch=1000, gpu=-1, batch_size=1, verbose=1, isn = False ):
         """
         Parameters
         ----------

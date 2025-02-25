@@ -56,7 +56,7 @@ def model_forward(edge_mask, data):
         out = model.predict(data, edge_mask)
     else:
         out, h = model.forward(data.x, data.edge_index, edge_mask)
-    print(out, out.shape, out.requires_grad, out.grad_fn)
+    #print(out, out.shape, out.requires_grad, out.grad_fn)
     return out
 
 

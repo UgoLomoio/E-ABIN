@@ -175,8 +175,8 @@ class GAE_Explainable(torch.nn.Module):
 
     def __init__(self,
                  in_dim,
-                 hid_dim=64,
-                 num_layers=4,
+                 hid_dim=16,
+                 num_layers=2,
                  dropout=0.,
                  weight_decay=0.,
                  act=F.relu,
