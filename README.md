@@ -43,3 +43,8 @@ python main.py
 ```
 
 
+## How to Use the Application
+
+See the [user guide](UserGuide.pdf).
+
+

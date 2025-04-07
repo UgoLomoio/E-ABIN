@@ -9,6 +9,15 @@ from matplotlib import cm
 import io 
 import base64
 
+# Set global font properties
+plt.rcParams['font.size'] = 20  # General font size
+plt.rcParams['font.weight'] = 'bold'  # All text bold
+plt.rcParams['axes.titlesize'] = 30  # Title font size
+plt.rcParams['axes.labelsize'] = 25  # X-Y label font size
+plt.rcParams['legend.fontsize'] = 22  # Legend font size
+plt.rcParams['xtick.labelsize'] = 18  # X-tick font size
+plt.rcParams['ytick.labelsize'] = 18  # Y-tick font size
+
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 model = None 

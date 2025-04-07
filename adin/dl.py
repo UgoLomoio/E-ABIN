@@ -17,7 +17,6 @@ import numpy as np
 import plotly.express as px 
 from .gaan import GAAN_Explainable
 
-
 scores = {"ROC AUC": eval_roc_auc, "F1": eval_f1, "Average Precision": eval_average_precision, "Recall@k": eval_recall_at_k, "Precision@k": eval_precision_at_k}
 
 epoch = 200
@@ -267,6 +266,30 @@ def plotly_featureimportance_from_gnnexplainer(explainer, data, node_id, genes, 
         height=400,
         template='plotly_white'
     )
+
+
+    # Set global font properties and specific overrides
+    fig.update_layout(
+        font=dict(
+            size=20,       # General font size (applies to ticks)
+            family="Arial", 
+            color="black",
+            weight="bold"  # Bold text globally
+        ),
+        title=dict(
+            font=dict(size=30)  # Title font size
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=25))  # X-axis label size
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=25))  # Y-axis label size
+        ),
+        legend=dict(
+            font=dict(size=22)  # Legend font size
+        )
+    )
+
 
     return fig
 

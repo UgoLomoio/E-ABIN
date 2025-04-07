@@ -186,9 +186,6 @@ gaan_params_layout = html.Div([
     html.Br(),
 ])
 
-
-
-
 # Define collapsible layout for each algorithm's parameters
 def get_lr_params():
     return dbc.Collapse(

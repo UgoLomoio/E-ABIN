@@ -40,7 +40,6 @@ from dash_shap_components import ForcePlot, ForceArrayPlot
 monitor = get_monitors()[0]
 mwidth, mheight = monitor.width, monitor.height 
 
-
 def plot_roc_curve_(y, y_pred):
     global mwidth
     global mheight
@@ -86,6 +85,28 @@ def plot_roc_curve_(y, y_pred):
         legend=dict(x=0.75, y=0.1), 
         height=int(mheight/4),
         width=int(mwidth/3)
+    )
+    
+    # Set global font properties and specific overrides
+    fig.update_layout(
+        font=dict(
+            size=20,       # General font size (applies to ticks)
+            family="Arial", 
+            color="black",
+            weight="bold"  # Bold text globally
+        ),
+        title=dict(
+            font=dict(size=30)  # Title font size
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=25))  # X-axis label size
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=25))  # Y-axis label size
+        ),
+        legend=dict(
+            font=dict(size=22)  # Legend font size
+        )
     )
     
     return fig
@@ -218,6 +239,28 @@ def baselineComparison(X, y, params, scoring='accuracy', class_weight=True):
         template='plotly_white'
     )
 
+    # Set global font properties and specific overrides
+    fig_roc.update_layout(
+        font=dict(
+            size=20,       # General font size (applies to ticks)
+            family="Arial", 
+            color="black",
+            weight="bold"  # Bold text globally
+        ),
+        title=dict(
+            font=dict(size=30)  # Title font size
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=25))  # X-axis label size
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=25))  # Y-axis label size
+        ),
+        legend=dict(
+            font=dict(size=22)  # Legend font size
+        )
+    )
+
     # Boxplot for model comparison
     fig_box = go.Figure()
     fig_box.add_trace(go.Box(y=results[0], name=namesModels[0], boxmean='sd'))
@@ -231,6 +274,27 @@ def baselineComparison(X, y, params, scoring='accuracy', class_weight=True):
         height=int(mheight/4),
         width=int(mwidth/3),
         template='plotly_white'
+    )
+    # Set global font properties and specific overrides
+    fig_box.update_layout(
+        font=dict(
+            size=20,       # General font size (applies to ticks)
+            family="Arial", 
+            color="black",
+            weight="bold"  # Bold text globally
+        ),
+        title=dict(
+            font=dict(size=30)  # Title font size
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=25))  # X-axis label size
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=25))  # Y-axis label size
+        ),
+        legend=dict(
+            font=dict(size=22)  # Legend font size
+        )
     )
 
     print(f'Best model: {best_nameModel} with {scoring}: {np.mean(best_scores):.4f}')
@@ -282,6 +346,27 @@ def models_roc_curves(models, X_test, y_test):
         width=int(mwidth/3),
         template='plotly_white'
     )
+    # Set global font properties and specific overrides
+    fig.update_layout(
+        font=dict(
+            size=20,       # General font size (applies to ticks)
+            family="Arial", 
+            color="black",
+            weight="bold"  # Bold text globally
+        ),
+        title=dict(
+            font=dict(size=30)  # Title font size
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=25))  # X-axis label size
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=25))  # Y-axis label size
+        ),
+        legend=dict(
+            font=dict(size=22)  # Legend font size
+        )
+    )
     
     return fig, best_model, best_score
 
@@ -311,6 +396,27 @@ def plot_feature_importance(importances, genes):
         width=int(mwidth/3),
         height=int(mheight/2),
         template='plotly_white'
+    )
+    # Set global font properties and specific overrides
+    fig.update_layout(
+        font=dict(
+            size=20,       # General font size (applies to ticks)
+            family="Arial", 
+            color="black",
+            weight="bold"  # Bold text globally
+        ),
+        title=dict(
+            font=dict(size=30)  # Title font size
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=25))  # X-axis label size
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=25))  # Y-axis label size
+        ),
+        legend=dict(
+            font=dict(size=22)  # Legend font size
+        )
     )
 
     return fig
@@ -356,7 +462,28 @@ def explain_model(model, model_name, X, genes, X_train = None):
             orientation='h')
     )
     fig.update_layout(title = 'Top 10 Most Important Genes Based on SHAP Values', xaxis_title="Mean Absolute SHAP Value", yaxis_title="Gene")
-
+    
+    # Set global font properties and specific overrides
+    fig.update_layout(
+        font=dict(
+            size=20,       # General font size (applies to ticks)
+            family="Arial", 
+            color="black",
+            weight="bold"  # Bold text globally
+        ),
+        title=dict(
+            font=dict(size=30)  # Title font size
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=25))  # X-axis label size
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=25))  # Y-axis label size
+        ),
+        legend=dict(
+            font=dict(size=22)  # Legend font size
+        )
+    )
     return fig 
 
 def shap_summary(model, model_name, X, genes, X_train = None):
@@ -376,6 +503,28 @@ def shap_summary(model, model_name, X, genes, X_train = None):
     
     # Make plot
     fig = shap.summary_plot(shap_values[:, :, 1], X, max_display=10, sort = True, feature_names=genes, show = True)
+    
+    # Set global font properties and specific overrides
+    fig.update_layout(
+        font=dict(
+            size=20,       # General font size (applies to ticks)
+            family="Arial", 
+            color="black",
+            weight="bold"  # Bold text globally
+        ),
+        title=dict(
+            font=dict(size=30)  # Title font size
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=25))  # X-axis label size
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=25))  # Y-axis label size
+        ),
+        legend=dict(
+            font=dict(size=22)  # Legend font size
+        )
+    )
 
 def shap_summary_plotly(model, model_name, X, targets, genes, patients, X_train = None):
 
@@ -484,6 +633,27 @@ def shap_summary_plotly(model, model_name, X, targets, genes, patients, X_train 
               yaxis=dict(showgrid=True, gridcolor='WhiteSmoke', zerolinecolor='Gainsboro'), boxgap=0)
     fig.update_layout(plot_bgcolor='white')
     fig.update_traces(jitter=1)
+    # Set global font properties and specific overrides
+    fig.update_layout(
+        font=dict(
+            size=20,       # General font size (applies to ticks)
+            family="Arial", 
+            color="black",
+            weight="bold"  # Bold text globally
+        ),
+        title=dict(
+            font=dict(size=30)  # Title font size
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=25))  # X-axis label size
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=25))  # Y-axis label size
+        ),
+        legend=dict(
+            font=dict(size=22)  # Legend font size
+        )
+    )
     
     return fig 
 
@@ -562,6 +732,28 @@ def shap_force_plotly(model, X_test, y_test, genes, index = 0):
             xaxis_title='Feature Index',
             yaxis_title='Prediction Value',
             showlegend=True
+        )
+
+        # Set global font properties and specific overrides
+        fig.update_layout(
+            font=dict(
+                size=20,       # General font size (applies to ticks)
+                family="Arial", 
+                color="black",
+                weight="bold"  # Bold text globally
+            ),
+            title=dict(
+                font=dict(size=30)  # Title font size
+            ),
+            xaxis=dict(
+                title=dict(font=dict(size=25))  # X-axis label size
+            ),
+            yaxis=dict(
+                title=dict(font=dict(size=25))  # Y-axis label size
+            ),
+            legend=dict(
+                font=dict(size=22)  # Legend font size
+            )
         )
         return fig 
 

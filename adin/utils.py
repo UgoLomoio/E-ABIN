@@ -610,6 +610,27 @@ def plot_cm(classes, cm, model_name):
         width=300,
         height=300
     )
+    # Set global font properties and specific overrides
+    fig.update_layout(
+        font=dict(
+            size=20,       # General font size (applies to ticks)
+            family="Arial", 
+            color="black",
+            weight="bold"  # Bold text globally
+        ),
+        title=dict(
+            font=dict(size=30)  # Title font size
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=25))  # X-axis label size
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=25))  # Y-axis label size
+        ),
+        legend=dict(
+            font=dict(size=22)  # Legend font size
+        )
+    )
 
     return fig
 
@@ -640,6 +661,27 @@ def validate_model(y_trues, y_preds, model_name):
 
     classes = {"Healthy Control": 0, "Anomalous": 1}
     fig_cm = plot_cm(classes, cm, model_name)
+    # Set global font properties and specific overrides
+    fig_cm.update_layout(
+        font=dict(
+            size=20,       # General font size (applies to ticks)
+            family="Arial", 
+            color="black",
+            weight="bold"  # Bold text globally
+        ),
+        title=dict(
+            font=dict(size=30)  # Title font size
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=25))  # X-axis label size
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=25))  # Y-axis label size
+        ),
+        legend=dict(
+            font=dict(size=22)  # Legend font size
+        )
+    )
 
     return fig_cm, metrics, "Accuracy: {} \n F1 score: {} \n Sensitivity: {} \n Specificity: {} \n ROC AUC score: {} \n Confusion Matrix: \n {} \n Classification Report: \n {} \n".format(acc, f1, sensitivity, specificity, auc, cm, cr)
 
@@ -673,13 +715,33 @@ def compress_expr(expr, ys):
             fig.add_trace(go.Scatter(x=expr[mask, 0], y=expr[mask, 1], mode="markers", marker=dict(color=colors[y], size=8), name=labels[y]))
 
         fig.update_layout(title = "Gene Expression 2D {}".format(method))
-    
-        if method == "PCA":
-          fig_pca = fig
-        else:
-          fig_tsne = fig 
-        
+            
         fig.update_layout(width = 700, height = 400)
-
+            # Set global font properties and specific overrides
+        fig.update_layout(
+            font=dict(
+                size=20,       # General font size (applies to ticks)
+                family="Arial", 
+                color="black",
+                weight="bold"  # Bold text globally
+            ),
+            title=dict(
+                font=dict(size=30)  # Title font size
+            ),
+            xaxis=dict(
+                title=dict(text="1st Component", font=dict(size=25))  # X-axis label size
+            ),
+            yaxis=dict(
+                title=dict(text="2nd Component", font=dict(size=25))  # Y-axis label size
+            ),
+            legend=dict(
+                font=dict(size=22)  # Legend font size
+            )
+        )
+       
+        if method == "PCA":
+            fig_pca = fig
+        else:
+            fig_tsne = fig 
     return fig_pca, fig_tsne
   
