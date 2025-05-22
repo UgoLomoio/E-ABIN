@@ -60,11 +60,10 @@ Deep learning analyses are conducted using a PyTorch-based module capable of per
 GPU acceleration enables network creation and deep learning modules using torch-based implementations. Additionally, CUDA users can use GPU acceleration to expedite file reading and preprocessing through cudf-pandas.
 
 The network building module can create two different types of networks: 
-\begin{itemize}
-    \item Convergence-Divergence network created using the cosine similarity function available in the torch library;
-    \item Individual Specific Networks available using the ISN-tractor library. ISN-tractor is a library that can create interactome based Individual Specific Networks that highlights patients' diversity.
-\end{itemize} 
-Network visualization is based on networkx \cite{networkx} and dynamically updated using the dash-cytoscape library.
+- Convergence-Divergence network created using the cosine similarity function available in the torch library;
+- Individual Specific Networks available using the ISN-tractor library. ISN-tractor is a library that can create interactome based Individual Specific Networks that highlights patients' diversity.
+    
+Network visualization is based on networkx and dynamically updated using the dash-cytoscape library.
 
 
 
