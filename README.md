@@ -1,6 +1,6 @@
-### =====================================================
-# ADIN: Anomaly Detection in Individual Networks      
-### =====================================================
+### =========================================================================*
+# E-ABIN: an Explainable module for Anomaly detection in BIological Networks *
+### =========================================================================*
 
 ## Python Version Compatibility
 

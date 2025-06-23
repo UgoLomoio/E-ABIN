@@ -1,7 +1,7 @@
 """
 ***************************************************************************************************************************************************************
 *                                                                                                                                                             *
-*   ADIN: A Python based GUI for anomaly detection and binary classification of gene expression data using explainable machine and deep learning              *
+*   E-ABIN: an Explainable module for Anomaly detection in BIological Networks                                                                                *
 *   Developed by Lomoio Ugo                                                                                                                                   *  
 *   2024                                                                                                                                                      *
 *                                                                                                                                                             *
@@ -13,6 +13,7 @@ import numpy as np
 import os  
 
 import platform
+
 if platform.system() == "linux":
     import cudf.pandas
     cudf.pandas.install()
@@ -26,6 +27,8 @@ import pandas as pd
 from dash.dash_table import DataTable
 import io 
 import base64
+import random 
+import sys 
 #import multiprocessing
 
 from sklearn.metrics import confusion_matrix
@@ -40,14 +43,13 @@ import json
 from torch_geometric.explain import Explainer, GNNExplainer
 import traceback
 import joblib 
+from adin.utils import set_seed
 
 #from parallel_pandas import ParallelPandas
-
 # Dynamically determine the number of CPU cores
 #n_cpu = multiprocessing.cpu_count()
 #initialize parallel-pandas
 #ParallelPandas.initialize(n_cpu=n_cpu, split_factor=4, disable_pr_bar=True)
-
 
 print("Detected Operative System {}".format(platform.system()))
 
@@ -98,6 +100,10 @@ explainers = {}
 genes_isn = None 
 interaction_df = None 
 contamination = None 
+non_deterministic_seed = random.randrange(sys.maxsize)
+current_seed = non_deterministic_seed
+is_deterministic = False
+drop_ratio = 0.01
 
 analysis_options = {
     'ML': ['KNN', 'LR', 'DT', 'SVM', 'RF'], #['LDA', 'NB', 'KNN', 'LR', 'DT', 'SVM', 'RF']
@@ -122,6 +128,32 @@ reset_button = dbc.Button(
 
 gpu = 0 if torch.cuda.is_available() else -1
 n_gpus = torch.cuda.device_count() - 1
+
+def set_deterministic(seed):
+    global current_seed
+    global is_deterministic
+
+    #FOR REPRODUCIBILITY:
+    print(f"SETTING DETERMINISTIC MODE FOR REPRODUCIBILITY, SEED: {seed}")
+    os.environ["CUBLAS_WORKSPACE_CONFIG"]=":16:8"
+    torch.use_deterministic_algorithms(True)
+    set_seed(seed)
+    current_seed = seed 
+    is_deterministic = True
+
+def unset_deterministic():
+    global non_deterministic_seed
+    global current_seed 
+    global is_deterministic
+
+    print(f"NOT DETERMINISTIC MODE IS USED. NO REPRODUCIBILITY GARANTEED")
+    torch.use_deterministic_algorithms(False)
+    set_seed(non_deterministic_seed)
+    current_seed = non_deterministic_seed
+    is_deterministic = False
+
+set_deterministic(0)
+
 
 gaan_params_layout = html.Div([
 
@@ -184,6 +216,26 @@ gaan_params_layout = html.Div([
         marks={i: str(i) for i in range(4)}
     ),
     html.Br(),
+
+    html.Label("Threshold Similarity:"),
+    dcc.Input(id='th', type='number', value=0.93, min=0.5, max=1.0, step=0.01),
+    html.Br(),
+
+    html.Label("Deterministic Mode:"),
+    dcc.Dropdown(
+                id="deterministic",
+                options=[
+                    {"label": "yes", "value": True},
+                    {"label": "no", "value": False},
+                ],
+                value=True,
+    ),
+    html.Br(),
+
+    html.Label("Deterministic Seed:"),
+    dcc.Input(id='seed', type='number', value=0, min=0, max=2**64-1,step=1),
+    html.Br()
+
 ])
 
 # Define collapsible layout for each algorithm's parameters
@@ -312,16 +364,31 @@ ml_params_layout = html.Div([
     get_knn_params(),
     get_rf_params(),
     get_dt_params(),
+    
+    html.Label("Deterministic Mode:"),
+    dcc.Dropdown(
+                id="deterministic",
+                options=[
+                    {"label": "yes", "value": True},
+                    {"label": "no", "value": False},
+                ],
+                value=True,
+    ),
+    html.Br(),
+
+    html.Label("Deterministic Seed:"),
+    dcc.Input(id='seed', type='number', value=0, min=0, max=2**64-1,step=1),
+    html.Br()
 ])
 
 navbar = dbc.NavbarSimple(
         children=[
-            dbc.NavItem(dbc.NavLink("Upload", href="/upload", id='upload-nav', n_clicks=0)),
-            dbc.NavItem(dbc.NavLink("Embeddings", href="/embeddings", id='embeddings-nav', n_clicks=0)),
-            dbc.NavItem(dbc.NavLink("Analysis", href="/analysis", id='analysis-nav', n_clicks=0)),
-            dbc.NavItem(dbc.NavLink("Explainability", href="/explain", id='explain-nav', n_clicks=0))
+            dbc.NavItem(dbc.NavLink("Upload", href="/upload", id='upload-nav', n_clicks=0, style={"font-weight": "bold", 'color':'orange'})),
+            dbc.NavItem(dbc.NavLink("Embeddings", href="/embeddings", id='embeddings-nav', n_clicks=0, style={"font-weight": "bold", 'color':'orange'})),
+            dbc.NavItem(dbc.NavLink("Analysis", href="/analysis", id='analysis-nav', n_clicks=0, style={"font-weight": "bold", 'color':'orange'})),
+            dbc.NavItem(dbc.NavLink("Explainability", href="/explain", id='explain-nav', n_clicks=0, style={"font-weight": "bold", 'color':'orange'}))
         ],
-        brand="ADIN",
+        brand="E-ABIN",
         brand_href="/",
         color="primary",
         dark=True,
@@ -335,7 +402,8 @@ navbar = dbc.NavbarSimple(
                     'borderStyle': 'dashed',
                     'borderRadius': '5px',
                     'textAlign': 'center',
-                    'margin': '0px'
+                    'margin': '0px',
+                    'font-weight': 'bold'
         },       
 )
 
@@ -395,8 +463,8 @@ footer = html.Footer([
         ])
 
 
-download_button_style = {   'position': 'absolute', 'top': '30%', 'right': '5%', 'width': '10%',
-                            'background-color': '#34B212', 'height': '8%', 'text-align': 'center', 'display':'none'}
+download_button_style = {'position': 'absolute', 'top': '30%', 'right': '5%', 'width': '10%', 
+                         'background-color': '#34B212', 'height': '8%', 'text-align': 'center', 'display':'none'}
 
 upload_layout = html.Div([
     
@@ -423,10 +491,13 @@ upload_layout = html.Div([
                 ],
                 value='no',
                 style={'display': 'inline-block'}
-            )
+            ),            
+            html.Br(),
+            html.Div("NaN drop ratio:", style={'display': 'inline-block', 'padding-left': '10px', 'padding-right': '10px'}),
+            dcc.Input(id='drop-ratio', type='number', value=0.01, min=0.01, max=1.0, step=0.01),
         ], style={'margin': '10px 0'}),
     ]),
-    
+
     html.Div([
         dcc.Interval(id='interval-component', interval=500, n_intervals=0),
         dcc.Interval(id='autorefresh-component', interval=1000, n_intervals=0), 
@@ -459,6 +530,7 @@ modal = dbc.Modal(
                     is_open=False,
                     fullscreen=True
                 )
+
 
 submit_style = {'position': 'absolute', 'bottom': '10%', 'right': '45%', 'width': '10%','background-color': '#34B212', 'height': '5%', 'text-align': 'center'}
 
@@ -679,6 +751,7 @@ def upload_file(gene_file):
     global limited_expr
     global progress 
     global patients 
+    global drop_ratio
 
     progress = 0
     if gene_file is not None:
@@ -731,6 +804,9 @@ def upload_file(gene_file):
         
         # Convert all columns to numeric, invalid entries become NaN
         expr = expr.apply(pd.to_numeric, errors='coerce')
+        
+        #print("Warning: PREPROCESSING IN DEBUG MODE, ONLY 50 GENES ARE USED")
+        #expr = expr.iloc[:, :50]
 
         #print("Expr:", expr)
         print("Targets:", targets)
@@ -739,7 +815,8 @@ def upload_file(gene_file):
         print("Preprocessing")
         add_log_message("Renaming columns & Replacing none values.")
         #print(annotation_df.shape, annotation_df.columns)
-        expr = preprocessing.preprocess(df, annotation_df, need_rename=True) 
+       
+        expr = preprocessing.preprocess(df, annotation_df, rate_drop=drop_ratio, need_rename=True) 
         progress = 90
         #print("Preprocessed:", expr)
         
@@ -824,6 +901,7 @@ def create_div_exp(captum_div, model_name):
             preds = model(mydataloader.x, mydataloader.edge_index)
 
         nodes, edges = dl.compute_elements_cyto(patients, edge_list, None, y.cpu(), preds.cpu(), isn = False)
+        print(f"Number of Nodes: {len(nodes)}, Number of Edges: {len(edges)}")
         return  html.Div([
                 
                             html.Br(),
@@ -1031,7 +1109,7 @@ def create_div_exp_isn(isn_index, captum_div, model_name):
     pred = preds[isn_index].item()
     preds = torch.tensor([pred for i in range(len(genes_isn))])
     nodes, edges = dl.compute_elements_cyto(genes_isn, edge_list, None, y, preds, isn = True)
-    
+    print(f"Number of Nodes: {len(nodes)}, Number of Edges: {len(edges)}")
     #explainer = explainers[model_name]
     #fig = dl.plotly_featureimportance_from_gnnexplainer(explainer, mydataloader, isn_index, genes_isn)
     #saved_figures['expnode'] = fig
@@ -1249,14 +1327,21 @@ def update_analysis_output():
     global isns 
     global interaction_df
     global contamination 
+    global is_deterministic
+    global current_seed
+
+    if is_deterministic:
+        set_deterministic(current_seed)
+    else:
+        unset_deterministic(current_seed)
 
     if method_g == 'ML':
-            
-        if fig_box is None or fig_roc is None or fig_roc_test is None:
+        
+        #if fig_box is None or fig_roc is None or fig_roc_test is None:
                
             df = pd.concat([expr, targets], axis=1)
             if ml_params is not None:
-                train_size = ml_params["train_size"]
+                train_size = ml_params.train_split
                 test_size = 1.0 - train_size
             else:
                 train_size = 0.7
@@ -1364,9 +1449,15 @@ def update_analysis_output():
     elif method_g == 'GAAN (node)':
         
         print("Creating Graph from gene expression array")
+
+        if gaan_params is not None:
+            th = gaan_params.th
+        else:
+            th = 0.93
+
         if edge_index is None:
 
-            edges_i, edge_list, _ = utils.get_edges_by_sim(expr)
+            edges_i, edge_list, _ = utils.get_edges_by_sim(expr, th=th)
 
             # Parse the edges and create node mapping
             source_nodes, target_nodes, node_mapping = utils.parse_edges(edges_i)
@@ -1396,7 +1487,7 @@ def update_analysis_output():
             gaan_params.isn = False 
         else:
             gpu = 0 if torch.cuda.is_available() else -1
-            gaan_params = gaan_config.GAAN_config(noise_dim=64, hid_dim=128, num_layers=2, dropout=0.3, contamination=contamination, lr = 0.00005, epoch = 200, gpu = gpu, batch_size=1, verbose = 1, isn = False)
+            gaan_params = gaan_config.GAAN_config(noise_dim=64, hid_dim=128, num_layers=2, dropout=0.3, contamination=contamination, lr = 0.00005, epoch = 200, gpu = gpu, batch_size=1, verbose = 1, isn = False, th = 0.93)
         
         attrs = vars(gaan_params)
         print(', '.join("%s: %s" % item for item in attrs.items()))
@@ -1590,12 +1681,13 @@ def update_analysis_output():
         
         if isns is None:
             isns, interaction_df = utils.create_sparse_isns(expr)
+            print(f"Interaction dataframe: {interaction_df}")
             isns = torch.stack(isns).to(device)
-            print(isns)
             isns = isns.T
+            print(isns.shape)
         
         edge_list = [row["feature_1"]+"_"+row["feature_2"] for index, row in interaction_df.iterrows()]
-
+        
         # Parse the edges and create node mapping
         source_nodes, target_nodes, node_mapping = utils.parse_edges(edge_list)
 
@@ -1605,7 +1697,7 @@ def update_analysis_output():
         x = torch.tensor(isns).to(device)
         y = torch.tensor(targets.values).to(device).flatten()
         edge_index = edge_index.to(device)
-
+        print(x.shape, y.shape, edge_index.shape)
         uqs, counts = torch.unique(y, return_counts = True)
         dict_counts = {}
         for uq, count in zip(uqs, counts):
@@ -1618,13 +1710,13 @@ def update_analysis_output():
             gaan_params.isn = True 
         else:
             gpu = 0 if torch.cuda.is_available() else -1
-            gaan_params = gaan_config.GAAN_config(noise_dim=64, hid_dim=128, num_layers=2, dropout=0.3, contamination=contamination, lr = 0.00005, epoch = 200, gpu = gpu, batch_size=1, verbose = 1, isn = True)
+            gaan_params = gaan_config.GAAN_config(noise_dim=64, hid_dim=128, num_layers=2, dropout=0.3, contamination=contamination, lr = 0.00005, epoch = 200, gpu = gpu, batch_size=1, verbose = 1, isn = True, th = 0.93)
 
         mydataloader = dl.create_torch_geo_data(x, y, edge_index)
         node_mapping_rev = {value: key for key, value in node_mapping.items()}
         
         print("Train - Test split")
-        dataloader_train, dataloader_test = dl.train_test_split_and_mask(mydataloader, node_mapping_rev, train_size = 0.7)
+        dataloader_train, dataloader_test = dl.train_test_split_and_mask(mydataloader, node_mapping_rev, train_size = 0.7, isn = True)
         in_dim = dataloader_train.x.shape[1]
         
         print("Create GAAN model")
@@ -1784,6 +1876,8 @@ def update_layout(pathname, n_clicks):
                                 page_size=10,
                                 style_table={'overflowY': 'auto', 'overflowX': 'scroll', 'height': '20%'},  # Scrollable table height
                             ), 
+                            dbc.Button("Download Preprocessed File", id="download-button", style=download_button_style, n_clicks=0),
+                            dcc.Download(id="download-csv"),
                             footer
                     ])
             
@@ -1882,13 +1976,15 @@ def update_progress(n):
     Input("upload-button", "n_clicks"),
     Input("upload-data", "contents"),
     Input("preprocessed-option", "value"),
+    Input("drop-ratio", "value"),
     prevent_initial_call=True  # Ensure callback doesn't run on load
 )
-def update_upload_onclick(upload_nclicks, gene_file, preprocessed):
+def update_upload_onclick(upload_nclicks, gene_file, preprocessed, d_ratio):
     
     global limited_expr 
     global gene_fileg 
     global download_button_style
+    global drop_ratio
 
     # Debugging print statements
     print(f"Button clicks - Upload: {upload_nclicks}")
@@ -1904,6 +2000,8 @@ def update_upload_onclick(upload_nclicks, gene_file, preprocessed):
     
     if button_id == 'upload-button':
         
+        drop_ratio = d_ratio
+
         download_button_style['display'] = 'block'
         if gene_fileg is not None:
             if preprocessed == 'yes':
@@ -1979,6 +2077,11 @@ def toogle_modal_exp_dl(exp_n, closemodal_n):
             is_open = False
     else:
         is_open = False
+
+    if is_open:
+        fig.layout.height = 700 
+        fig.layout.width = 1200
+
     return fig, is_open
 
 # Callback to update page content based on upload file button clicks
@@ -2016,6 +2119,11 @@ def toogle_modal_exp_ml(shapexp_n, shapsum_n, closemodal_n):
             is_open = True 
     else:
         is_open = False
+
+    if is_open:
+        fig.layout.height = 700 
+        fig.layout.width = 1200
+
     return fig, is_open
 
 
@@ -2043,8 +2151,8 @@ def toogle_modal_params(open_n, close_n):
         is_open = True
     else:
         is_open = False
-    return is_open, dash.no_update
 
+    return is_open, dash.no_update
 
 # Callback to update page content based on upload file button clicks
 @app.callback(
@@ -2067,7 +2175,6 @@ def toogle_modal_emb(pca_n, tsne_n, closemodal_n):
    
     # Default figure to prevent any issues if nothing matches
     fig = dash.no_update
-
     is_open = False 
 
     if button_id == 'close-modal':
@@ -2082,6 +2189,11 @@ def toogle_modal_emb(pca_n, tsne_n, closemodal_n):
             is_open = True 
     else:
         is_open = False
+
+    if is_open:
+        fig.layout.height = 700 
+        fig.layout.width = 1200
+
     return fig, is_open
 
 
@@ -2121,6 +2233,11 @@ def toogle_modal_analysis_dl(roctest_n, confm_n, closemodal_n):
             is_open = True 
     else:
         is_open = False
+
+    if is_open:
+        fig.layout.height = 700 
+        fig.layout.width = 1200
+
     return fig, is_open
 
 # Callback to update page content based on upload file button clicks
@@ -2146,6 +2263,7 @@ def toogle_modal_analysis_ml(boxp_n, roc_n, roctest_n, confm_n, closemodal_n):
     
     # Default figure to prevent any issues if nothing matches
     fig = dash.no_update
+
     is_open = False 
 
     if button_id == 'close-modal':
@@ -2168,9 +2286,12 @@ def toogle_modal_analysis_ml(boxp_n, roc_n, roctest_n, confm_n, closemodal_n):
             is_open = True 
     else:
         is_open = False
+
+    if is_open:
+        fig.layout.height = 700 
+        fig.layout.width = 1200
+
     return fig, is_open
-
-
 
 # Callback to update page content based on analyze button clicks
 @app.callback(
@@ -2307,7 +2428,8 @@ def download_onclick(download_nclicks):
             #print(targets)
             df = pd.concat([expr, targets], axis=1)
             return dcc.send_data_frame(df.to_csv, "preprocessed_data.csv")
-
+        else:
+            print("Can't download preprocessed dataset.")
 
 # Callback to update page content based on analyze button clicks
 @app.callback(
@@ -2334,6 +2456,7 @@ def update_analyze_onclick(analyze_nclicks, method):
     if button_id == 'analyze-button':
         if expr is not None:
             div = update_analysis_output()
+
             return div
         else:
             div = html.Div([
@@ -2370,12 +2493,29 @@ def update_explain_onclick(explain_nclicks, model_name_in):
     else:
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
+    trained = False
     if button_id == 'explain-button':
         if expr is not None:
             if model_name in analysis_options['ML']:
-                div = update_explainability_ml(model_name)
+                if model_name in models.keys():
+                    div = update_explainability_ml(model_name)
+                    trained = True
             else:
-                div = update_explainability_dl(model_name)
+                if model_name in models.keys():
+                    div = update_explainability_dl(model_name)
+                    trained = True
+            if not trained:
+                div = html.Div([
+                    html.Br(),
+                    html.Br(),
+                    html.Br(),
+                    html.Br(),
+                    html.Br(),
+                    html.Br(),
+                    html.P(f"Train the model '{model_name}' and try again.", 
+                           style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'}), 
+                    footer 
+                ])
             return div
         else:
             div = html.Div([
@@ -2386,7 +2526,7 @@ def update_explain_onclick(explain_nclicks, model_name_in):
                 html.Br(),
                 html.Br(),
                 html.P("Upload a gene expression file first.",
-                style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'}), 
+                       style = {'color': 'red', 'width': '100%', 'textAlign': 'center', 'fontWeight': 'bold'}), 
                 footer 
             ])
         return div 
@@ -2582,8 +2722,6 @@ def update_forceplot(patient_idx):
     
     return ml.get_plot("force-plot", {}, model, model_name, X, ys, genes, index = patient_idx, top_n = 10, X_train = X_train, class_id = y, title=plot_title)
 
-
-
 # Callback to handle the form submission and display selected values
 @app.callback(
     Output('output-container', 'children', allow_duplicate=True),
@@ -2598,10 +2736,13 @@ def update_forceplot(patient_idx):
     Input('gpu', 'value'),
     Input('batch_size', 'value'),
     Input('verbose', 'value'),
+    Input('th', 'value'),
+    Input('deterministic', 'value'),
+    Input('seed', 'value')
     ],
     prevent_initial_call=True
 )
-def update_gaan_params(n_clicks, noise_dim, hid_dim, num_layers, dropout, contamination, lr, epoch, gpu, batch_size, verbose):
+def update_gaan_params(n_clicks, noise_dim, hid_dim, num_layers, dropout, contamination, lr, epoch, gpu, batch_size, verbose, th, deterministic, seed):
     
     global gaan_params 
 
@@ -2609,7 +2750,10 @@ def update_gaan_params(n_clicks, noise_dim, hid_dim, num_layers, dropout, contam
 
     if n_clicks > 0:
         
-        gaan_params = gaan_config.GAAN_config(noise_dim=noise_dim, hid_dim=hid_dim, num_layers=num_layers, dropout=dropout, contamination=contamination, lr = lr, epoch = epoch, gpu = gpu, batch_size=batch_size, verbose = verbose)
+        gaan_params = gaan_config.GAAN_config(noise_dim=noise_dim, hid_dim=hid_dim, num_layers=num_layers, dropout=dropout, contamination=contamination, lr = lr, epoch = epoch, gpu = gpu, batch_size=batch_size, verbose = verbose, th = th)
+        if deterministic:
+            set_deterministic(seed)
+
         return html.Div([
             html.H4("Submitted Parameters:"),
             html.P(f"Noise Dimension: {noise_dim}"),
@@ -2621,7 +2765,10 @@ def update_gaan_params(n_clicks, noise_dim, hid_dim, num_layers, dropout, contam
             html.P(f"Number of Epochs: {epoch}"),
             html.P(f"GPU Index: {gpu}"),
             html.P(f"Batch Size: {batch_size}"),
-            html.P(f"Verbosity Mode: {verbose}")
+            html.P(f"Verbosity Mode: {verbose}"),
+            html.P(f"Threshold: {th}"),
+            html.P(f"Deterministic: {deterministic}"),
+            html.P(f"Seed: {seed}")
         ])
     
     return dash.no_update
@@ -2642,11 +2789,13 @@ def update_gaan_params(n_clicks, noise_dim, hid_dim, num_layers, dropout, contam
      Input("dt-max-depth", "value"),
      Input("dt-min-samples-split", "value"),
      Input("split-train", "value"),
-     Input("cv-split", "value")
+     Input("cv-split", "value"),
+     Input("deterministic", "value"),
+     Input("seed", "value")
     ],
     prevent_initial_call = True
 )
-def update_params_ml(n_clicks, lr_solver, lr_penalty, lr_max_iter, svm_kernel, svm_c, knn_k, knn_metric, rf_n_estimators, rf_max_depth, dt_max_depth, dt_min_samples_split, train_split, cv_n_splits):
+def update_params_ml(n_clicks, lr_solver, lr_penalty, lr_max_iter, svm_kernel, svm_c, knn_k, knn_metric, rf_n_estimators, rf_max_depth, dt_max_depth, dt_min_samples_split, train_split, cv_n_splits, deterministic, seed):
     
     global ml_params
 
@@ -2656,6 +2805,8 @@ def update_params_ml(n_clicks, lr_solver, lr_penalty, lr_max_iter, svm_kernel, s
         
         ml_params = ml_config.ML_config(lr_solver, lr_penalty, lr_max_iter, svm_kernel, svm_c, knn_k, knn_metric, rf_n_estimators, rf_max_depth, dt_max_depth, dt_min_samples_split, train_split, cv_n_splits)
         
+        if deterministic:
+            set_deterministic(seed)
         # Return confirmation message (or save output) 
         return html.Div([
             html.H4("Submitted Parameters:"),
@@ -2670,8 +2821,11 @@ def update_params_ml(n_clicks, lr_solver, lr_penalty, lr_max_iter, svm_kernel, s
             html.P(f"Decision tree max_depth: {dt_max_depth}"),
             html.P(f"Decision tree min_samples_split: {dt_min_samples_split}"),
             html.P(f"Train split: {train_split}"),
-            html.P(f"Cross validation n_splits: {cv_n_splits}")
+            html.P(f"Cross validation n_splits: {cv_n_splits}"),
+            html.P(f"Deterministic: {deterministic}"),
+            html.P(f"Seed: {seed}")
         ])
+
     return dash.no_update
 
 @app.callback(
@@ -2716,6 +2870,6 @@ def update_graph_div(selected_graph_index, model_name):
 
 if __name__ == '__main__':
         
-    print("Running ADIN")
+    print("Running E-ABIN")
     webbrowser.open(html_plot_path)    
     app.run_server(debug=False)

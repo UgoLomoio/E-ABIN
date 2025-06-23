@@ -117,12 +117,12 @@ def train_test_split(data, test_size = 0.7, target_name = 'Target'):
     return X_train, X_test, y_train, y_test
 
 
-def baselineComparison(X, y, params, scoring='accuracy', class_weight=True):
+def baselineComparison(X, y, params, scoring='roc_auc', class_weight=True):
     '''Input:
     X: array-like (features)
     y: array-like (target values)
     model_params: Model Config object containing params for cross validation and single models
-    scoring: metric for cross-validation (default: 'accuracy')
+    scoring: metric for cross-validation (default: 'roc_auc')
     class_weight: boolean, True for classification problems (default True)
     '''
    
@@ -179,7 +179,7 @@ def baselineComparison(X, y, params, scoring='accuracy', class_weight=True):
     # Cross-validation for each model
     for nameModel, model in models:
         kfold = StratifiedKFold(n_splits=n_splits, shuffle=True)
-
+        #print(nameModel, model)
         aucs = []
         tprs = []
 
@@ -198,15 +198,18 @@ def baselineComparison(X, y, params, scoring='accuracy', class_weight=True):
             interp_tpr[0] = 0.0
             tprs.append(interp_tpr)
 
+        #print(f"Aucs: {aucs}")
         mean_tpr = np.mean(tprs, axis=0)
         mean_tpr[-1] = 1.0
-        mean_auc = auc(mean_fpr, mean_tpr)
+        #mean_auc = auc(mean_fpr, mean_tpr)
+        mean_auc = np.mean(aucs)
+        #print(f"AUC: {mean_auc}")
         std_auc = np.std(aucs)
 
         fig_roc.add_trace(go.Scatter(
             x=mean_fpr, y=mean_tpr,
             mode='lines',
-            name=f"{nameModel} (AUC = {mean_auc:.2f} +/- {std_auc:.2f})",
+            name=f"{nameModel} (AUC = {mean_auc:.4f} +/- {std_auc:.4f})",
             line=dict(width=2)
         ))
 
@@ -263,9 +266,10 @@ def baselineComparison(X, y, params, scoring='accuracy', class_weight=True):
 
     # Boxplot for model comparison
     fig_box = go.Figure()
-    fig_box.add_trace(go.Box(y=results[0], name=namesModels[0], boxmean='sd'))
+    #fig_box.add_trace(go.Box(y=results[0], name=namesModels[0], boxmean='sd'))
 
     for i, result in enumerate(results):
+        print(namesModels[i], result)
         fig_box.add_trace(go.Box(y=result, name=namesModels[i], boxmean='sd'))
 
     fig_box.update_layout(
@@ -817,7 +821,6 @@ def create_results_df(models, X_test, y_test):
         if model_name not in ["LR", "SVM", "KNN", "RF", "DT"]:
             continue
         else:
-            print(model_name)
             y_pred = model.predict(X_test)
             _, metrics, msg = validate_model(y_test, y_pred, model_name)
             acc = float(round(metrics['accuracy']*100, 2))
@@ -827,6 +830,5 @@ def create_results_df(models, X_test, y_test):
             auc = float(round(metrics['auc_score'], 4))
             precision = float(round(metrics['precision']*100, 2))
             df.loc[i] = [model_name, acc, f1, sensitivity, specificity, auc, precision]
-
     df = df.sort_values(by = "AUC score", ascending = False)
     return df

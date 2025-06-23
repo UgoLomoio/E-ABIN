@@ -25,7 +25,7 @@ import gc
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-def create_sparse_isns(expr, th = 0.4): 
+def create_sparse_isns(expr, th = 0.98): 
 
     genes = expr.columns
     values = expr.values
@@ -35,33 +35,38 @@ def create_sparse_isns(expr, th = 0.4):
     
     isns = []
     for i, isn in enumerate(isn_generator):
-        if i%100 == 0:
+        if i%1000 == 0:
             print(i, isn.shape)
+            #gc.collect()
+            torch.cuda.empty_cache()
         isns.append(isn)
         del isn
-        gc.collect()
-        torch.cuda.empty_cache()
 
     return isns, interaction_df
 
-def create_interaction_df(values, genes, th=0.4):
+def create_interaction_df(values, genes, th=0.98):
     
+    genes = np.array(list(genes))
+    values = values.T
     values = torch.from_numpy(values).to(device)
+    
+    print("Computing Gene-Level correlation")
+    corr = torch.corrcoef(values).to(device) 
+    n = corr.shape[0]
 
-    corr = torch.corrcoef(values)
+    print(f"Masking correlation matrix - threshold {th}")
+    # Create mask for upper triangle (excluding diagonal)
+    mask = (torch.abs(corr) >= th) & ~torch.eye(n, dtype=torch.bool, device='cuda')
 
-    df = pd.DataFrame([], columns = ["feature_1", "feature_2"])
-    idx = 0
-    for i in range(corr.shape[0]):
-        for j in range(corr.shape[1]):
-            if i != j:
-                c = corr[i, j]
-                if abs(c) >= th:
-                    gene1 = genes[i]
-                    gene2 = genes[j]
-                    df.loc[idx] = [gene1, gene2]
-                    idx += 1 
-    return df
+    print("Preparing Interaction dataframe")
+    # Get indices of significant pairs
+    rows, cols = torch.nonzero(mask, as_tuple=True)
+    # Convert indices to gene pairs (assuming genes is a list)
+    gene_pairs = [(genes[i], genes[j]) for i, j in zip(rows.cpu(), cols.cpu())]
+    # Create DataFrame in one operation (much faster than appending)
+    df = pd.DataFrame(gene_pairs, columns=["feature_1", "feature_2"])
+
+    return df 
 
 def find_geoaccession_code(lines, skiprows):
     for i, line in enumerate(lines):  # Enumerate to count the lines
@@ -109,13 +114,12 @@ def get_annotation_df(gse, values_df, platforms):
     
     return found_platform, annotation_df
 
-def get_edges_by_sim(expr):
+def get_edges_by_sim(expr, th = 0.93):
 
     exp_values = expr.values
     edges_1 = []
     edge_list = []
     edge_weights = []
-    th = 0.93
     for i, elem1 in enumerate(exp_values):
         if not torch.is_tensor(elem1):
             elem1 = torch.tensor(elem1)
@@ -745,3 +749,9 @@ def compress_expr(expr, ys):
             fig_tsne = fig 
     return fig_pca, fig_tsne
   
+
+def set_seed(seed=0):
+    import random
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)

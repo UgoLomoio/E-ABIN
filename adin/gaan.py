@@ -25,7 +25,7 @@ from scipy.special import erf
 from torch_geometric.nn import GIN
 from torch_geometric import compile
 from torch_geometric.loader import NeighborLoader
-
+from torch_geometric.utils import subgraph
 
 def logger(epoch=0,
            loss=0,
@@ -425,11 +425,19 @@ class GAAN_Explainable(torch.nn.Module):
         data.batch_size = self.batch_size
 
         if hasattr(data, 'n_id'):
-          node_idx = data.n_id
+          node_idx = data.n_id.to(self.device)
         else:
           node_idx = torch.arange(len(data.x))
 
-        data.n_id  = node_idx
+        data.n_id  = node_idx.to(self.device)
+
+        
+        edge_index = data.edge_index.to(self.device)
+
+        # Add re-mapping for sampled subgraphs:
+        if self.isn:
+            if hasattr(data, 'n_id'):
+                edge_index, _ = subgraph(data.n_id, edge_index, relabel_nodes=True)
 
         x = data.x.to(self.device)
 
@@ -439,10 +447,10 @@ class GAAN_Explainable(torch.nn.Module):
           s = to_dense_adj(data.edge_index)[0]
           data.s = s
 
-        edge_index = data.edge_index.to(self.device)
-
         x_, a, a_ = self.forward(x)
-
+        #print(a_.shape)
+        #print(edge_index)
+        
         loss_g = self.loss_func_g(a_[edge_index])
         loss_g.requires_grad_(True)
         self.opt_in.zero_grad()
@@ -539,7 +547,7 @@ class GAAN_Explainable(torch.nn.Module):
                 self.decision_score_[node_idx[:batch_size]] = score
 
                 optimizer.zero_grad()
-                loss.backward()
+                loss.backward(retain_graph=True)
                 optimizer.step()
 
             loss_value = epoch_loss / data.x.shape[0]

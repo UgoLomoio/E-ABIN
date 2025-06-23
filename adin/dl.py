@@ -17,6 +17,7 @@ import numpy as np
 import plotly.express as px 
 from .gaan import GAAN_Explainable
 
+
 scores = {"ROC AUC": eval_roc_auc, "F1": eval_f1, "Average Precision": eval_average_precision, "Recall@k": eval_recall_at_k, "Precision@k": eval_precision_at_k}
 
 epoch = 200
@@ -57,7 +58,7 @@ def train_and_test_mlp(X_train, X_test, y_train, y_test, max_iter = 50):
     print(report)
     
 
-def train_test_split_and_mask(data, node_mapping_rev, train_size = 0.2):
+def train_test_split_and_mask(data, node_mapping_rev, train_size = 0.2, isn = False):
     from sklearn.model_selection import train_test_split
     """
     Input:
@@ -93,6 +94,7 @@ def train_test_split_and_mask(data, node_mapping_rev, train_size = 0.2):
 
     train_edgeindex = filter_edge_index(data.edge_index, data.train_mask)
     test_edgeindex = filter_edge_index(data.edge_index, data.test_mask)
+
     train_dataloader = create_torch_geo_data(data.x[data.train_mask], data.y[data.train_mask], train_edgeindex)
     test_dataloader = create_torch_geo_data(data.x[data.test_mask], data.y[data.test_mask], test_edgeindex)
     return train_dataloader, test_dataloader

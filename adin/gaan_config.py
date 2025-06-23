@@ -3,7 +3,7 @@ from torch import nn
 class GAAN_config:
     """A class used for GAAN model configs."""
 
-    def __init__(self, noise_dim=16, hid_dim=64, num_layers=2, dropout=0.3, act=nn.ReLU, backbone=None, contamination=None, lr=0.00005, epoch=1000, gpu=-1, batch_size=1, verbose=1, isn = False ):
+    def __init__(self, noise_dim=16, hid_dim=64, num_layers=2, dropout=0.3, act=nn.ReLU, backbone=None, contamination=None, lr=0.00005, epoch=1000, gpu=-1, batch_size=1, verbose=1, isn = False, th=0.93):
         """
         Parameters
         ----------
@@ -33,6 +33,7 @@ class GAAN_config:
 
         isn (float, optional) . Input type. If True, the input must be multiple ISNs networks with a graph-level anomaly detection. If False, the input must be only one network, anomaly detection node-level.
 
+        th (float, optional). Similarity threshold value to compute edges between nodes in convergence-divergence networks. 
         https://docs.pygod.org/en/latest/generated/pygod.detector.GAAN.html
         """
 
@@ -49,4 +50,5 @@ class GAAN_config:
         self.batch_size=batch_size
         self.verbose=verbose
         self.isn = isn 
+        self.th = th
 
