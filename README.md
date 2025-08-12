@@ -1,4 +1,4 @@
-E-ABIN: an Explainable module for Anomaly detection in BIological Networks 
+# E-ABIN: an Explainable module for Anomaly detection in BIological Networks 
 
 ## Python Version Compatibility
 
@@ -40,7 +40,7 @@ Make sure you have Microsoft Visual C++ 14.0 or greater installed. You can obtai
 Once the dependencies are installed, you can run the application with the following command:
 
 ```
-python main.py
+python app.py
 ```
 
 
