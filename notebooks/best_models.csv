@@ -1,0 +1,5 @@
+Dataset,Model Name,AUC score
+bladder_cancer,LR,1.0
+celiac,LR,0.73
+colorectal_cancer,LR,1.0
+parkinson,LR,0.64

@@ -58,7 +58,7 @@ def train_and_test_mlp(X_train, X_test, y_train, y_test, max_iter = 50):
     print(report)
     
 
-def train_test_split_and_mask(data, node_mapping_rev, train_size = 0.2, isn = False):
+def train_test_split_and_mask(data, train_size = 0.2, isn = False):
     from sklearn.model_selection import train_test_split
     """
     Input:
@@ -124,8 +124,8 @@ def train_gaan(model, train_data):
 from sklearn.metrics import confusion_matrix, roc_auc_score, classification_report, accuracy_score, f1_score, recall_score, precision_score
 
 def create_results_df(detectors, test_data):
-    
-    columns = ["Model name", "Accuracy", "F1", "Sensitivity", "Specificity", "ROC AUC", "Precision"]
+
+    columns = ["Model Name", "Accuracy", "F1", "Sensitivity", "Specificity", "AUC score", "Precision"]
     df = pd.DataFrame(columns = columns)
     for i, (detector_name, detector) in enumerate(detectors.items()):
         y_test = test_data.y.clone()

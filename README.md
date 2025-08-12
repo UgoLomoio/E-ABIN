@@ -4,21 +4,24 @@
 
 ## Python Version Compatibility
 
-Compatible Python Versions: Python 3.x
-
-Not Supported: Python 3.12 (due to some external library incompatibilities)
-
-Tested On: Python 3.10
+Compatible Python Versions: Python < 3.13
+Tested on: Python 3.12
 
 ## Requirements
-- Python 3.x
+- Python 3.12
 - pip (Python package installer)
+- anaconda
+
+For Python 3.13 compatibility:
+- Remove isn_tractor requirement from "requirementstorchcuda" or requirementstorch"
 
 ## Installation Instructions
-### For CUDA Users
+### For CUDA Users (NVIDIA GPUs - recommended)
 To install the required dependencies for CUDA support, run the following commands:
 
 ```
+conda create -n eabin python=3.12 pip setuptools
+conda activate eabin
 pip install -r requirementscuda.txt
 pip install -r requirementstorchcuda.txt
 ```

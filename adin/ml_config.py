@@ -1,7 +1,7 @@
 class ML_config:
     """A class used for ML models configs."""
 
-    def __init__(self, solver = "lbfsg", penalty = "l2", max_iter = 100, kernel = "linear", c = 1, k = 5, distance = "euclidean", n_estimators = 100, max_depth = 1, max_depth_dt = 1, min_samples_split = 2, train_split = 0.7, cross_val_k = 2):
+    def __init__(self, solver = "lbfsg", penalty = "l2", max_iter = 100, kernel = "linear", c = 1, k = 5, distance = "euclidean", n_estimators = 100, max_depth = 1, max_depth_dt = 1, min_samples_split = 2, train_split = 0.7, cross_val_k = 5):
         """
         Parameters
         ----------

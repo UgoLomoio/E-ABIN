@@ -1,6 +1,6 @@
---extra-index-url https://data.pyg.org/whl/torch-2.4.0+cpu.html
-numpy==1.24.1
-torch==2.4.0
+--extra-index-url https://download.pytorch.org/whl/cu124
+numpy
+torch==2.6.0+cu124
 torchvision
 torchaudio
 shap
@@ -19,3 +19,7 @@ dash-shap-components
 dash-cytoscape
 ninja
 jupyterlab
+networkx
+kaleido
+pytorch-lightning
+triton

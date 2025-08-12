@@ -421,7 +421,6 @@ class GAAN_Explainable(torch.nn.Module):
 
         #print("model forward")
 
-
         data.batch_size = self.batch_size
 
         if hasattr(data, 'n_id'):
@@ -430,6 +429,9 @@ class GAAN_Explainable(torch.nn.Module):
           node_idx = torch.arange(len(data.x))
 
         data.n_id  = node_idx.to(self.device)
+
+        global_to_local = {nid.item(): i for i, nid in enumerate(data.n_id)}
+        node_idx_local = torch.tensor([global_to_local[nid.item()] for nid in node_idx], device=node_idx.device)
 
         
         edge_index = data.edge_index.to(self.device)
@@ -446,6 +448,10 @@ class GAAN_Explainable(torch.nn.Module):
         else:
           s = to_dense_adj(data.edge_index)[0]
           data.s = s
+                
+        #print("s.shape:", s.shape)
+        #print("node_idx:", node_idx)
+        #print("max index in node_idx:", node_idx.max().item())
 
         x_, a, a_ = self.forward(x)
         #print(a_.shape)
@@ -462,13 +468,15 @@ class GAAN_Explainable(torch.nn.Module):
         loss = self.loss_func_ed(a[edge_index],
                                        a_[edge_index].detach())
 
-        score = self.score_func(x=x[:self.batch_size],
-                                      x_=x_[:self.batch_size],
-                                      s=s[:self.batch_size, node_idx],
-                                      s_=a[:self.batch_size],
-                                      weight=self.weight,
-                                      pos_weight_s=1,
-                                      bce_s=True)
+        score = self.score_func(
+            x=x[:self.batch_size],
+            x_=x_[:self.batch_size],
+            s=s[:self.batch_size, node_idx_local],
+            s_=a[:self.batch_size],
+            weight=self.weight,
+            pos_weight_s=1,
+            bce_s=True
+        )
 
         #print("end model forward")
 

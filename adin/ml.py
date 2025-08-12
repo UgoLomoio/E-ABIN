@@ -1,3 +1,4 @@
+import os
 import platform
 
 if platform.system() == "linux":
@@ -24,6 +25,8 @@ from sklearn.metrics import roc_curve, auc
 #import matplotlib.pyplot as plt
 
 from sklearn.model_selection import StratifiedKFold
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 #import seaborn as sns
 
 from .utils import validate_model#, plot_cm
@@ -36,6 +39,8 @@ import plotly.express as px
 
 from screeninfo import get_monitors
 from dash_shap_components import ForcePlot, ForceArrayPlot
+
+from sklearn.model_selection import GridSearchCV
 
 monitor = get_monitors()[0]
 mwidth, mheight = monitor.width, monitor.height 
@@ -111,21 +116,209 @@ def plot_roc_curve_(y, y_pred):
     
     return fig
 
-def train_test_split(data, test_size = 0.7, target_name = 'Target'):
+
+def plot_cv_y_distribution(ytrain: dict, yval: dict):
+    """
+    Visualize the distribution of target values in cross-validation splits using an interactive boxplot with Plotly.
+
+    Args:
+        ytrain (dict): Dictionary mapping split index to training target values (array-like or list).
+        yval (dict): Dictionary mapping split index to validation target values (array-like or list).
+
+    Returns:
+        None: Displays the interactive plot.
+    """
+    fig = go.Figure()
+    #histogram 
+    for fold, ys in yval.items():
+        fig.add_trace(go.Histogram(
+            x=ys,
+            name=f'Validation Fold {fold}',
+            opacity=0.75,
+            marker_color='orange',
+            xbins=dict(size=0.2)  # Adjust bin size as needed
+        ))
+    for fold, ys in ytrain.items():
+        fig.add_trace(go.Histogram(
+            x=ys,
+            name=f'Train Fold {fold}',
+            opacity=0.75,
+            marker_color='blue',
+            xbins=dict(size=0.2)  # Adjust bin size as needed
+        ))
+    fig.update_layout(
+        title='Distribution of Target Variable (y) in Cross-Validation Splits',
+        xaxis_title='Target Value',
+        yaxis_title='Count',
+        barmode='overlay',  # Overlay histograms
+        height=int(mheight/4),
+        width=int(mwidth/3),
+        template='plotly_white'
+    )
+    fig.write_image('cv_y_distribution.png', format='png', scale=4)  # Save the plot as a PNG file
+
+
+
+def plot_train_test_distribution(ys_train, ys_test):
+    """
+    Visualize the distribution of target values between training and test sets using an interactive KDE plot with Plotly.
+
+    Args:
+        ys_train (array-like or list): Training target values.
+        ys_test (array-like or list): Test target values.
+
+    Returns:
+        None: Displays the interactive plot.
+    """
+
+    # Prepare data for distplot (KDE)
+    group_labels = ['Train', 'Test']
+    colors = ['blue', 'orange']
+    
+    data = [ys_train, ys_test]
+    fig = go.Figure()
+    for i, ys in enumerate(data):
+        fig.add_trace(go.Histogram(
+            x=ys,
+            name=group_labels[i],
+            opacity=0.75,
+            marker_color=colors[i],
+            xbins=dict(size=0.2)  # Adjust bin size as needed
+        ))
+    fig.update_layout(
+        title='Distribution of Target Variable (y) in Train and Test Sets',
+        xaxis_title='Target Value',
+        yaxis_title='Count',
+        barmode='overlay',  # Overlay histograms
+        height=int(mheight/4),
+        width=int(mwidth/3),
+        template='plotly_white'
+    )
+
+    fig.write_image('train_test_y_distribution.png', format='png', scale=4)  # Save the plot as a PNG file
+
+def train_test_split(data, dataset_path, test_size = 0.7, target_name = 'Target'):
     #data: pd.DataFrame
-    X_train, X_test, y_train, y_test = sklearn.model_selection.train_test_split(data.drop(target_name, axis=1).values, data[target_name].values, test_size=test_size, stratify = data[target_name])
+    sep = os.sep
+
+    if os.path.exists(dataset_path + sep + 'X_train.npz') and os.path.exists(dataset_path + sep + 'X_test.npz'):
+        print("Loading train/test split from disk...")
+        train = np.load(dataset_path + sep + 'X_train.npz', allow_pickle = True)
+        X_train = train["arr_0"]
+        y_train = train["arr_1"]
+        test = np.load(dataset_path + sep + 'X_test.npz', allow_pickle = True)
+        X_test = test["arr_0"]
+        y_test = test["arr_1"]
+    else:
+        X_train, X_test, y_train, y_test = sklearn.model_selection.train_test_split(data.drop(target_name, axis=1).values, data[target_name].values, test_size=test_size, stratify = data[target_name])
+        print("Saving train/test split to disk...")
+        np.savez(dataset_path + sep + 'X_train.npz', X_train, y_train)
+        np.savez(dataset_path + sep + 'X_test.npz', X_test, y_test)
+    
+    plot_train_test_distribution(y_train, y_test)
+    
     return X_train, X_test, y_train, y_test
 
 
-def baselineComparison(X, y, params, scoring='roc_auc', class_weight=True):
+def grid_search_model(model, X, y, name, scoring='roc_auc', cv=5):
+    """
+    Perform grid search for hyperparameter tuning of a given model with
+    optional preprocessing normalization step.
+
+    Parameters:
+    - model: The machine learning model to be tuned.
+    - X: Feature matrix (array-like).
+    - y: Target vector (array-like).
+    - name: Name of the model (for logging purposes).
+    - scoring: Metric for evaluating the model (default is 'roc_auc').
+    - cv: Number of cross-validation folds (default is 5).
+
+    Returns:
+    - best_model: The best model pipeline found during grid search.
+    - best_score: The best score achieved by the best model.
+    """
+
+    # Define parameter grids for each model with key names adjusted for pipeline
+    params_grid = {
+        'LR': {
+            'scaler': [None, MinMaxScaler(), StandardScaler()],
+            'model__solver': ['liblinear', 'saga'],
+            'model__penalty': ['l2', 'l1', None],
+            'model__max_iter': [100, 200, 300]
+        },
+        'SVM': {
+            'scaler': [None, MinMaxScaler(), StandardScaler()],
+            'model__kernel': ['linear', 'rbf'],
+            'model__C': [0.1, 1, 10]
+        },
+        'KNN': {
+            'scaler': [None, MinMaxScaler(), StandardScaler()],
+            'model__n_neighbors': [3, 5, 7],
+            'model__metric': ['euclidean', 'manhattan']
+        },
+        'DT': {
+            'scaler': [None],  # Typically, decision trees don't benefit from scaling
+            'model__max_depth': [None, 5, 10],
+            'model__min_samples_split': [2, 5, 10]
+        },
+        'RF': {
+            'scaler': [None],  # Random forests typically do not require scaling
+            'model__n_estimators': [50, 100, 200],
+            'model__max_depth': [None, 5, 10]
+        }
+    }
+
+    params = params_grid[name]
+    print(f"Performing grid search for {name} with parameters: {params}")
+
+    # Build the pipeline
+    pipe = Pipeline([
+        ('scaler', None),
+        ('model', model)
+    ])
+
+    gs = GridSearchCV(pipe, params, scoring=scoring, cv=cv, n_jobs=-1)
+    gs.fit(X, y)
+
+    best_model = gs.best_estimator_
+    best_score = gs.best_score_
+
+    print(f"Best parameters: {gs.best_params_}")
+    print(f"Best score: {best_score:.4f}")
+
+    return best_model, best_score
+
+
+
+def baselineComparison(X, y, params, scoring='roc_auc', class_weight=True, grid_search=False):
     '''Input:
     X: array-like (features)
     y: array-like (target values)
     model_params: Model Config object containing params for cross validation and single models
     scoring: metric for cross-validation (default: 'roc_auc')
     class_weight: boolean, True for classification problems (default True)
+    grid_search: boolean, True to perform grid search for hyperparameter tuning (default False)
     '''
    
+    n_splits = params.cross_val_k
+    print(f"Number of splits for cross-validation: {n_splits}")
+
+    #check if the number of data and balancing of the dataset is sufficient to enable cross validation using this number of splits 
+
+    uqs, counts = np.unique(y, return_counts=True)
+    uq_count = {uq: count for uq, count in zip(uqs, counts)}
+    print(f"Unique classes in target: {uq_count}")
+
+    if min(counts) < n_splits:
+        print(f"Not enough data for {n_splits} splits, reducing to {min(counts)} splits.")
+        n_splits = min(counts)
+    #else:
+    #    if uq_count[0] >= 2*uq_count[1] or uq_count[1] >= 2*uq_count[0]:
+    #        n_splits = 2
+
+    print("Cross-validation splits: ", n_splits)
+    # Cross-validation for each model
+    
     # Define the models
     models = []
 
@@ -136,11 +329,26 @@ def baselineComparison(X, y, params, scoring='roc_auc', class_weight=True):
         models.append(('LDA', LinearDiscriminantAnalysis()))
         models.append(('NB', GaussianNB()))
 
-    models.append(('LR', LogisticRegression(solver=params.lr['solver'], max_iter=params.lr["max_iter"], class_weight=cw)))
-    models.append(('KNN', KNeighborsClassifier(params.knn["k"], metric=params.knn["metric"])))
-    models.append(('DT', DecisionTreeClassifier(max_depth = params.dt["max_depth"], min_samples_split = params.dt["min_samples_split"], class_weight=cw)))
-    models.append(('SVM', SVC(kernel = params.svm["kernel"], C = params.svm["C"], gamma='scale', class_weight=cw, probability=True)))
-    models.append(('RF', RandomForestClassifier(max_depth=params.rf["max_depth"], n_estimators=params.rf["n_estimators"], class_weight=cw)))
+    if grid_search:
+        print("Performing grid search for hyperparameter tuning...")
+        models_grid = [
+            ('LR', LogisticRegression(solver=params.lr['solver'], penalty=params.lr['penalty'], max_iter=params.lr["max_iter"], class_weight=cw)),
+            ('KNN', KNeighborsClassifier(n_neighbors=params.knn["k"], metric=params.knn["metric"])),
+            ('DT', DecisionTreeClassifier(max_depth=params.dt["max_depth"], min_samples_split=params.dt["min_samples_split"], class_weight=cw)),
+            ('SVM', SVC(kernel=params.svm["kernel"], C=params.svm["C"], gamma='scale', class_weight=cw, probability=True)),
+            ('RF', RandomForestClassifier(max_depth=params.rf["max_depth"], n_estimators=params.rf["n_estimators"], class_weight=cw))
+        ]
+        for name, model in models_grid:
+            print(f"Grid search for {name}...")
+            best_model, _ = grid_search_model(model, X, y, name, cv=n_splits)
+            print(f"Best model for {name}: {best_model}")
+            models.append((name, best_model))
+    else:
+        models.append(('LR', LogisticRegression(solver=params.lr['solver'], max_iter=params.lr["max_iter"], class_weight=cw)))
+        models.append(('KNN', KNeighborsClassifier(params.knn["k"], metric=params.knn["metric"])))
+        models.append(('DT', DecisionTreeClassifier(max_depth = params.dt["max_depth"], min_samples_split = params.dt["min_samples_split"], class_weight=cw)))
+        models.append(('SVM', SVC(kernel = params.svm["kernel"], C = params.svm["C"], gamma='scale', class_weight=cw, probability=True)))
+        models.append(('RF', RandomForestClassifier(max_depth=params.rf["max_depth"], n_estimators=params.rf["n_estimators"], class_weight=cw)))
 
     results = []
     namesModels = []
@@ -152,51 +360,47 @@ def baselineComparison(X, y, params, scoring='roc_auc', class_weight=True):
     fig_roc = go.Figure()
     mean_fpr = np.linspace(0, 1, 100)
 
-    """
-    counts, uqs = np.unique(y, return_counts=True)
-    
-    if min(counts) > 20:
-        n_splits = 10
-    elif min(counts) < 20 and min(counts) > 10:
-        n_splits = 5
-    else:
-        n_splits = 2
-    """
-    n_splits = params.cross_val_k
+    kfold = StratifiedKFold(n_splits=n_splits, shuffle=True)
 
-    #check if the number of data and balancing of the dataset is sufficient to enable cross validation using this number of splits 
+    ys_train = {}
+    ys_val = {}
+    xs_train = {}
+    xs_val = {}
 
-    uqs, counts = np.unique(y, return_counts=True)
-    uq_count = {uq: count for uq, count in zip(uqs, counts)}
+    for fold, (train, val) in enumerate(kfold.split(X, y)):
+        
+        X_train_res, y_train_res = X[train], y[train]
+        X_val_res, y_val_res = X[val], y[val]
+        ys_train[fold] = y_train_res
+        ys_val[fold] = y_val_res
+        xs_train[fold] = X_train_res
+        xs_val[fold] = X_val_res
 
-    if min(uq_count) < n_splits:
-        n_splits = 2
-    else:
-        if uq_count[0] >= 2*uq_count[1] or uq_count[1] >= 2*uq_count[0]:
-            n_splits = 2
+    #Plot cross-validation distribution of target values
+    plot_cv_y_distribution(ys_train, ys_val)
 
-    print("Cross-validation splits: ", n_splits)
-    # Cross-validation for each model
+
     for nameModel, model in models:
-        kfold = StratifiedKFold(n_splits=n_splits, shuffle=True)
-        #print(nameModel, model)
+        
         aucs = []
         tprs = []
 
-        for fold, (train, test) in enumerate(kfold.split(X, y)):
-            X_train_res, y_train_res = X[train], y[train]
-            X_test_res, y_test_res = X[test], y[test]
+        for fold, y_train_res in ys_train.items():
+
+            X_train_res = xs_train[fold]
+            X_val_res, y_val_res = xs_val[fold], ys_val[fold]
 
             model.fit(X_train_res, y_train_res)
-            y_pred_prob = model.predict_proba(X_test_res)[:, 1]
+            y_pred_prob = model.predict_proba(X_val_res)[:, 1]
 
-            fpr, tpr, _ = roc_curve(y_test_res, y_pred_prob)
+            fpr, tpr, _ = roc_curve(y_val_res, y_pred_prob)
             roc_auc = auc(fpr, tpr)
             aucs.append(roc_auc)
 
             interp_tpr = np.interp(mean_fpr, fpr, tpr)
             interp_tpr[0] = 0.0
             tprs.append(interp_tpr)
+
 
         #print(f"Aucs: {aucs}")
         mean_tpr = np.mean(tprs, axis=0)
@@ -207,10 +411,10 @@ def baselineComparison(X, y, params, scoring='roc_auc', class_weight=True):
         std_auc = np.std(aucs)
 
         fig_roc.add_trace(go.Scatter(
-            x=mean_fpr, y=mean_tpr,
-            mode='lines',
-            name=f"{nameModel} (AUC = {mean_auc:.4f} +/- {std_auc:.4f})",
-            line=dict(width=2)
+                x=mean_fpr, y=mean_tpr,
+                mode='lines',
+                name=f"{nameModel} (AUC = {mean_auc:.4f} +/- {std_auc:.4f})",
+                line=dict(width=2)
         ))
 
         if scoring == 'roc_auc':
@@ -221,11 +425,11 @@ def baselineComparison(X, y, params, scoring='roc_auc', class_weight=True):
         if np.mean(scores) > np.mean(best_scores):
             best_scores = scores
             best_nameModel = nameModel
-
         results.append(scores)
         namesModels.append(nameModel)
         msg = f"{nameModel}: {np.mean(scores):.4f} ({np.std(scores):.4f})"
         print(msg)
+
 
     # Final ROC Curve Plot Configuration
     fig_roc.add_trace(go.Scatter(
@@ -340,7 +544,7 @@ def models_roc_curves(models, X_test, y_test):
 
     # Update layout for better appearance
     fig.update_layout(
-        title="ROC Curve on the test set (80%)",
+        title="ROC Curve on the test set",
         xaxis_title="False Positive Rate",
         yaxis_title="True Positive Rate",
         xaxis=dict(range=[0, 1]),
@@ -425,7 +629,7 @@ def plot_feature_importance(importances, genes):
 
     return fig
 
-def explain_model(model, model_name, X, genes, X_train = None):
+def explain_model(model, model_name, X, genes, X_train = None, return_shap = False):
      
     # Fit your model 
     
@@ -488,7 +692,11 @@ def explain_model(model, model_name, X, genes, X_train = None):
             font=dict(size=22)  # Legend font size
         )
     )
-    return fig 
+
+    if return_shap:
+        return fig, feature_importances
+    else:
+        return fig 
 
 def shap_summary(model, model_name, X, genes, X_train = None):
     
@@ -822,7 +1030,8 @@ def create_results_df(models, X_test, y_test):
             continue
         else:
             y_pred = model.predict(X_test)
-            _, metrics, msg = validate_model(y_test, y_pred, model_name)
+            y_probs = model.predict_proba(X_test)[:, 1] if hasattr(model, 'predict_proba') else None
+            _, metrics, msg = validate_model(y_test, y_pred, model_name, y_probs=y_probs)
             acc = float(round(metrics['accuracy']*100, 2))
             f1 = float(round(metrics['f1'], 2))
             sensitivity = float(round(metrics['sensitivity']*100, 2))
